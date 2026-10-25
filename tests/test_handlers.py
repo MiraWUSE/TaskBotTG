@@ -622,3 +622,12 @@ async def test_inbox_ui_capture_card_assign_date_and_no_fsm_stealing(ui):
     await ui.text('/new')
     await ui.text('Изучить Docker')
     assert await ui.state() == TaskFlow.when.state
+
+
+async def test_statistics_ui_is_personal_and_period_switches(ui):
+    await ui.text('/stats')
+    assert 'Статистика' in ui.session.latest.text
+    await ui.click(ui.button('stats:month'))
+    assert 'за месяц' in ui.session.latest.text
+    await ui.click('stats:invalid')
+    assert await ui.state() is None

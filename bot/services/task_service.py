@@ -352,6 +352,7 @@ class TaskService:
             row = await self._owned_task(connection, user_id, task_id)
             now = self._timestamp()
             if row["repeat"] == "none":
+                await self._record_completion(connection,row,row['remind_at'],now)
                 await self._cancel_deliveries(connection, task_id, now)
                 await connection.execute("UPDATE tasks SET status='completed',revision=revision+1,updated_at=? WHERE id=? AND user_id=?",
                                          (now, task_id, user_id))
@@ -360,12 +361,14 @@ class TaskService:
                     f"SELECT id,due_at,scheduled_at FROM deliveries WHERE task_id=? AND generation=? AND kind='main' AND status IN {LIVE_DELIVERIES} "
                     "ORDER BY due_at,id LIMIT 1", (task_id, row["generation"]))
                 if occurrence and occurrence["due_at"] <= row["remind_at"]:
+                    await self._record_completion(connection,row,occurrence['scheduled_at'],now)
                     await self._cancel_advances(connection, task_id, now, occurrence['scheduled_at'])
                     await connection.execute(
                         "UPDATE deliveries SET status='completed',claim_token=NULL,lease_until=NULL,updated_at=? WHERE id=?",
                         (now, occurrence["id"]),
                     )
                 else:
+                    await self._record_completion(connection,row,row['remind_at'],now)
                     await self._cancel_advances(connection, task_id, now, row['remind_at'])
                     next_time = next_occurrence(_datetime(row["remind_at"]), row["repeat"], row["timezone"],
                                                 after=max(self.now(), _datetime(row["remind_at"])))
@@ -374,6 +377,13 @@ class TaskService:
                 await connection.execute("UPDATE tasks SET revision=revision+1,updated_at=? WHERE id=? AND user_id=?",
                                          (now, task_id, user_id))
             return _task(await _one(connection, TASK_VIEW + "SELECT * FROM task_view WHERE id=? AND user_id=?", (task_id, user_id)))
+
+    @staticmethod
+    async def _record_completion(connection, task, scheduled_at: int | None, now: int) -> None:
+        task_id = task['task_id'] if 'task_id' in task.keys() else task['id']
+        await connection.execute('''INSERT OR IGNORE INTO task_completions
+            (task_id,user_id,generation,occurrence_key,scheduled_at,completed_at) VALUES (?,?,?,?,?,?)''',
+            (task_id,task['user_id'],task['generation'],str(scheduled_at) if scheduled_at is not None else 'inbox',scheduled_at,now))
 
     @staticmethod
     async def _owned_delivery(connection, user_id: int, delivery_id: int):
@@ -394,6 +404,8 @@ class TaskService:
             row = await self._owned_delivery(connection, user_id, delivery_id)
             now = self._timestamp()
             await self._cancel_advances(connection, row['task_id'], now, row['scheduled_at'])
+            if not deleted:
+                await self._record_completion(connection,row,row['scheduled_at'],now)
             await connection.execute("UPDATE deliveries SET status=?,updated_at=? WHERE id=?",
                                      ("cancelled" if deleted else "completed", now, delivery_id))
             if row["repeat"] == "none":

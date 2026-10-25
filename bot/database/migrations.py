@@ -149,6 +149,20 @@ MIGRATIONS = (
         'CREATE INDEX tasks_due ON tasks(status,remind_at)',
         'CREATE INDEX tasks_category ON tasks(user_id,category,status)',
     ), rebuild_tables=True),
+    Migration(8, (
+        '''CREATE TABLE task_completions (
+            task_id INTEGER NOT NULL REFERENCES tasks(id), user_id INTEGER NOT NULL REFERENCES users(id),
+            generation INTEGER NOT NULL, occurrence_key TEXT NOT NULL, scheduled_at INTEGER,
+            completed_at INTEGER NOT NULL, PRIMARY KEY(task_id,generation,occurrence_key)
+        )''',
+        '''INSERT OR IGNORE INTO task_completions SELECT d.task_id,t.user_id,d.generation,
+            CAST(d.scheduled_at AS TEXT),d.scheduled_at,d.updated_at
+            FROM deliveries d JOIN tasks t ON t.id=d.task_id WHERE d.kind='main' AND d.status='completed' ''',
+        '''INSERT OR IGNORE INTO task_completions SELECT id,user_id,generation,
+            COALESCE(CAST(remind_at AS TEXT),'inbox'),remind_at,updated_at
+            FROM tasks WHERE repeat='none' AND status='completed' ''',
+        'CREATE INDEX completions_owner_time ON task_completions(user_id,completed_at)',
+    )),
 )
 
 
