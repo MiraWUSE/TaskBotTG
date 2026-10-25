@@ -20,7 +20,7 @@ class CalendarService:
         first = _local_to_utc(datetime.combine(start,time.min),zone,forward_gap=True)
         last = _local_to_utc(datetime.combine(end,time.min),zone,forward_gap=True)
         async with self.tasks.database.read() as connection:
-            rows = await _all(connection, TASK_VIEW + "SELECT * FROM task_view WHERE user_id=? AND status='active'", (user_id,))
+            rows = await _all(connection, TASK_VIEW + "SELECT * FROM task_view WHERE user_id=? AND status='active' AND remind_at IS NOT NULL", (user_id,))
             outstanding = await _all(connection, f'''SELECT d.task_id,d.due_at FROM deliveries d JOIN tasks t ON t.id=d.task_id
                 WHERE t.user_id=? AND t.status='active' AND d.kind='main' AND d.generation=t.generation
                 AND d.status IN {LIVE_DELIVERIES} AND d.due_at>=? AND d.due_at<?''',

@@ -145,3 +145,24 @@ async def test_two_connections_claim_same_day_once(tmp_path, clock):
 async def test_invalid_clock(service):
     with pytest.raises(ValidationError):
         await SummaryService(service).configure(1, clock='25:00')
+
+
+async def test_settings_wait_for_inflight_send_and_preserve_ack(service,clock):
+    summaries = await configure(service,send_empty=True)
+    clock.advance(hours=1)
+    started,release = asyncio.Event(),asyncio.Event()
+    class PausedSender:
+        async def send_message(self,**kwargs):
+            started.set()
+            await release.wait()
+            return SimpleNamespace(message_id=100)
+    sending = asyncio.create_task(summaries.send_due(PausedSender()))
+    await asyncio.wait_for(started.wait(),2)
+    changing = asyncio.create_task(summaries.configure(1,enabled=False))
+    await asyncio.sleep(0)
+    assert not changing.done()
+    release.set()
+    assert await sending == 1
+    await changing
+    async with service.database.read() as connection:
+        assert (await (await connection.execute('SELECT status FROM daily_summaries')).fetchone())[0] == 'sent'

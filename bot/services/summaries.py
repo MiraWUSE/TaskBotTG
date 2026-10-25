@@ -22,19 +22,20 @@ class SummaryService:
 
     async def configure(self, user_id: int, *, enabled: bool | None = None,
                         clock: str | None = None, send_empty: bool | None = None) -> None:
-        user = await self.tasks.get_user(user_id)
-        try:
-            value = parse_time(clock).strftime('%H:%M') if clock is not None else user.summary_time
-        except ValueError as error:
-            raise ValidationError(str(error)) from error
-        async with self.tasks.task_lock(-user_id), self.tasks.database.transaction() as connection:
-            await connection.execute('''UPDATE users SET summary_enabled=?,summary_time=?,summary_empty=?,
-                summary_from=?,updated_at=? WHERE id=?''',
-                (user.summary_enabled if enabled is None else enabled, value,
-                 user.summary_empty if send_empty is None else send_empty,
-                 self.tasks._timestamp(), self.tasks._timestamp(), user_id))
-            # Pending requests made with old settings must not be sent.
-            await connection.execute("UPDATE daily_summaries SET status='skipped',claim_token=NULL,lease_until=NULL WHERE user_id=? AND status IN ('pending','sending')", (user_id,))
+        async with self.tasks.task_lock(-user_id):
+            user = await self.tasks.get_user(user_id)
+            try:
+                value = parse_time(clock).strftime('%H:%M') if clock is not None else user.summary_time
+            except ValueError as error:
+                raise ValidationError(str(error)) from error
+            async with self.tasks.database.transaction() as connection:
+                await connection.execute("""UPDATE users SET summary_enabled=?,summary_time=?,summary_empty=?,
+                    summary_from=?,updated_at=? WHERE id=?""",
+                    (user.summary_enabled if enabled is None else enabled,value,
+                     user.summary_empty if send_empty is None else send_empty,
+                     self.tasks._timestamp(),self.tasks._timestamp(),user_id))
+                # Do not send queued messages prepared with old settings.
+                await connection.execute("UPDATE daily_summaries SET status='skipped',claim_token=NULL,lease_until=NULL WHERE user_id=? AND status IN ('pending','sending')",(user_id,))
 
     async def prepare(self) -> None:
         now = self.tasks.now()
@@ -64,7 +65,8 @@ class SummaryService:
             async with self.tasks.database.transaction() as connection:
                 current = await _one(connection, 'SELECT * FROM users WHERE id=?', (user['id'],))
                 if (not current['summary_enabled'] or current['summary_from'] != user['summary_from']
-                        or current['timezone'] != user['timezone'] or current['blocked']):
+                        or current['timezone'] != user['timezone'] or current['blocked']
+                        or current['summary_time'] != user['summary_time'] or current['summary_empty'] != user['summary_empty']):
                     continue
                 await connection.execute('''INSERT OR IGNORE INTO daily_summaries(user_id,local_day,scheduled_at,
                     text,status,next_attempt_at,timezone) VALUES (?,?,?,?,?,?,?)''',
@@ -98,31 +100,35 @@ class SummaryService:
             row = await self.claim(lease_seconds)
             if row is None:
                 break
-            try:
-                async with self.tasks.task_lock(-row['user_id']):
-                    async with self.tasks.database.read() as connection:
-                        current = await _one(connection, '''SELECT d.id FROM daily_summaries d JOIN users u ON u.id=d.user_id
-                            WHERE d.id=? AND d.claim_token=? AND d.status='sending' AND d.lease_until>?
-                            AND u.summary_enabled=1 AND u.blocked=0 AND u.timezone=d.timezone''',
-                            (row['id'],row['claim_token'],self.tasks._timestamp()))
-                    if current is None:
-                        continue
-                    message = await bot.send_message(chat_id=row['chat_id'], text=row['text'], parse_mode='HTML')
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                delay = min(3600, 30 * 2 ** min(row['attempts'] - 1, 7))
-                if isinstance(error, TelegramRetryAfter):
-                    delay = max(delay, int(error.retry_after) + 1)
-                async with self.tasks.database.transaction() as connection:
-                    await connection.execute("UPDATE daily_summaries SET status='pending',next_attempt_at=?,claim_token=NULL,lease_until=NULL WHERE id=? AND claim_token=? AND status='sending'",
-                                             (self.tasks._timestamp()+delay, row['id'], row['claim_token']))
-                    if isinstance(error, TelegramForbiddenError):
-                        await connection.execute('UPDATE users SET blocked=1 WHERE id=?', (row['user_id'],))
-                logger.warning('Сводка %s отложена: %s', row['id'], type(error).__name__)
-                continue
-            async with self.tasks.database.transaction() as connection:
-                cursor = await connection.execute("UPDATE daily_summaries SET status='sent',message_id=?,sent_at=?,claim_token=NULL,lease_until=NULL WHERE id=? AND claim_token=? AND status='sending'",
-                                                 (message.message_id,self.tasks._timestamp(),row['id'],row['claim_token']))
-                sent += bool(cursor.rowcount)
+            async with self.tasks.task_lock(-row['user_id']):
+                sent += await self._send_claim(bot,row)
         return sent
+
+    async def _send_claim(self, bot, row) -> int:
+        async with self.tasks.database.read() as connection:
+            current = await _one(connection, """SELECT d.id FROM daily_summaries d JOIN users u ON u.id=d.user_id
+                WHERE d.id=? AND d.claim_token=? AND d.status='sending' AND d.lease_until>?
+                AND u.summary_enabled=1 AND u.blocked=0 AND u.timezone=d.timezone""",
+                (row['id'],row['claim_token'],self.tasks._timestamp()))
+        today = self.tasks.now().astimezone(ZoneInfo(row['timezone'])).date().isoformat()
+        if current is None or row['local_day'] != today:
+            return 0
+        try:
+            message = await bot.send_message(chat_id=row['chat_id'],text=row['text'],parse_mode='HTML')
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            delay = min(3600,30 * 2 ** min(row['attempts']-1,7))
+            if isinstance(error,TelegramRetryAfter):
+                delay = max(delay,int(error.retry_after)+1)
+            async with self.tasks.database.transaction() as connection:
+                cursor = await connection.execute("UPDATE daily_summaries SET status='pending',next_attempt_at=?,claim_token=NULL,lease_until=NULL WHERE id=? AND claim_token=? AND status='sending'",
+                                                  (self.tasks._timestamp()+delay,row['id'],row['claim_token']))
+                if isinstance(error,TelegramForbiddenError) and cursor.rowcount:
+                    await connection.execute('UPDATE users SET blocked=1 WHERE id=?',(row['user_id'],))
+            logger.warning('Сводка %s отложена: %s',row['id'],type(error).__name__)
+            return 0
+        async with self.tasks.database.transaction() as connection:
+            cursor = await connection.execute("UPDATE daily_summaries SET status='sent',message_id=?,sent_at=?,claim_token=NULL,lease_until=NULL WHERE id=? AND claim_token=? AND status='sending'",
+                                              (message.message_id,self.tasks._timestamp(),row['id'],row['claim_token']))
+            return int(bool(cursor.rowcount))

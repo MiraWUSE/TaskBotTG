@@ -605,3 +605,20 @@ async def test_subtasks_ui_add_mark_rename_confirm_delete(ui):
     await ui.click(ui.button('sub:confirm:'))
     assert '0 из 0' in ui.session.latest.text
     assert (await ui.service.list_tasks(HUMAN.id))[1] == 1
+
+
+async def test_inbox_ui_capture_card_assign_date_and_no_fsm_stealing(ui):
+    await ui.text('/inbox')
+    await ui.click(ui.button('inbox:add'))
+    await ui.text('Изучить Docker')
+    task = (await ui.service.list_tasks(HUMAN.id,inbox=True))[0][0]
+    assert task.remind_at is None and 'Без даты' in ui.session.latest.text
+    await ui.click(ui.button('task:time:'))
+    await ui.text('завтра 8:00')
+    assert (await ui.service.get_task(HUMAN.id,task.id)).remind_at is not None
+    assert (await ui.service.list_tasks(HUMAN.id,inbox=True))[1] == 0
+    await ui.text('/inbox Прочитать книгу')
+    assert (await ui.service.list_tasks(HUMAN.id,inbox=True))[1] == 1
+    await ui.text('/new')
+    await ui.text('Изучить Docker')
+    assert await ui.state() == TaskFlow.when.state

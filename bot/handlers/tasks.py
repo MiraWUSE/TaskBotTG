@@ -64,12 +64,15 @@ def _title(text: str | None) -> str:
 def _status(task, now: datetime) -> str:
     if task.status in {"completed", "done"}:
         return "✅ Выполнена"
+    if task.remind_at is None:
+        return '📥 Во входящих'
     return "🔔 Ожидает выполнения" if task.remind_at <= now else "⏳ Запланирована"
 
 
 def _task_version(task) -> str:
     """Identify the displayed occurrence without inflating callback payloads."""
-    value = f"{task.id}:{task.generation}:{getattr(task, 'revision', 0)}:{int(task.remind_at.timestamp())}"
+    stamp = int(task.remind_at.timestamp()) if task.remind_at is not None else 'none'
+    value = f"{task.id}:{task.generation}:{getattr(task, 'revision', 0)}:{stamp}"
     return sha256(value.encode()).hexdigest()[:12]
 
 
@@ -79,7 +82,7 @@ def _task_text(task, timezone: str, now: datetime) -> str:
         f"{priority_icon(task.priority)} <b>{escape(task.title)}</b>\n\n"
         f"🚦 {PRIORITIES[task.priority]}\n"
         f"🗂 {escape(task.category_label)}\n"
-        f"📅 {format_datetime(task.remind_at, timezone)}\n"
+        f"📅 {format_datetime(task.remind_at, timezone) if task.remind_at else 'Без даты и напоминания'}\n"
         f"🌍 {escape(timezone)}\n"
         f"🔁 {repeat}\n"
         f"{_status(task, now)}"
@@ -185,7 +188,7 @@ async def _choose_datetime(
         await state.clear()
         await message.answer(
             "✅ Время задачи изменено!\n\n" + _task_text(task, user.timezone, service.now()),
-            reply_markup=task_keyboard(task.id, task.repeat, data.get("today", False), data.get("page", 0), _task_version(task)),
+            reply_markup=task_keyboard(task.id, task.repeat, data.get("today", False), data.get("page", 0), _task_version(task), inbox=task.remind_at is None),
             parse_mode="HTML",
         )
     elif data.get("mode") == "snooze":
@@ -340,7 +343,7 @@ async def choose_repeat(callback: CallbackQuery, state: FSMContext, service: Tas
     await edit_message(
         callback.message,
         "✅ <b>Задача создана!</b>\n\n" + _task_text(task, user.timezone, service.now()),
-        task_keyboard(task.id, task.repeat, False, 0, _task_version(task)),
+        task_keyboard(task.id, task.repeat, False, 0, _task_version(task), inbox=task.remind_at is None),
     )
 
 
@@ -383,7 +386,7 @@ async def _show_list(
         lines = [heading, f"🌍 {escape(user.timezone)} · Страница {page + 1}/{(total + PAGE_SIZE - 1) // PAGE_SIZE}"]
         for offset, task in enumerate(tasks, start=page * PAGE_SIZE + 1):
             lines.append(
-                f"\n{offset}. {priority_icon(task.priority)} <b>{escape(task.title)}</b>\n"
+                f"\n{offset}. {priority_icon(task.priority)} <b>{escape(task.title[:80])}</b>\n"
                 f"📅 {format_datetime(task.remind_at, user.timezone)} · {_status(task, service.now())}"
             )
         text = "\n".join(lines)
@@ -462,7 +465,7 @@ async def task_callback(callback: CallbackQuery, state: FSMContext, service: Tas
     if action == "view":
         await state.clear()
         await answer_callback(callback)
-        await edit_message(callback.message, _task_text(task, user.timezone, service.now()), task_keyboard(task.id, task.repeat, today, page, _task_version(task)))
+        await edit_message(callback.message, _task_text(task, user.timezone, service.now()), task_keyboard(task.id, task.repeat, today, page, _task_version(task), inbox=task.remind_at is None))
         return
     if action == "rename":
         await state.clear()
@@ -490,14 +493,14 @@ async def task_callback(callback: CallbackQuery, state: FSMContext, service: Tas
             else:
                 await edit_message(
                     callback.message, f"✅ Задача выполнена!\n📝 {escape(task.title)}",
-                    inline([[("◀️ К списку", f"list:{int(today)}:{page}")]]),
+                    inline([[("◀️ К списку", ("inbox:list:0" if task.remind_at is None else f"list:{int(today)}:{page}"))]]),
                 )
         else:
             await service.delete_task(callback.from_user.id, task.id)
             await state.clear()
             await answer_callback(callback, "Повторение остановлено" if task.repeat != "none" else "Задача удалена")
             text = "🛑 Повторение остановлено. Серия удалена." if task.repeat != "none" else "🗑 Задача удалена."
-            await edit_message(callback.message, f"{text}\n📝 {escape(task.title)}", inline([[("◀️ К списку", f"list:{int(today)}:{page}")]]))
+            await edit_message(callback.message, f"{text}\n📝 {escape(task.title)}", inline([[("◀️ К списку", ("inbox:list:0" if task.remind_at is None else f"list:{int(today)}:{page}"))]]))
     except TaskNotFound:
         await _stale(callback)
     except ValidationError:
@@ -520,7 +523,7 @@ async def rename_task(message: Message, state: FSMContext, service: TaskService)
     user = await service.get_user(message.from_user.id)
     await message.answer(
         "✅ Название изменено!\n\n" + _task_text(task, user.timezone, service.now()),
-        reply_markup=task_keyboard(task.id, task.repeat, data.get("today", False), data.get("page", 0), _task_version(task)),
+        reply_markup=task_keyboard(task.id, task.repeat, data.get("today", False), data.get("page", 0), _task_version(task), inbox=task.remind_at is None),
         parse_mode="HTML",
     )
 
@@ -628,7 +631,7 @@ async def advance_callback(callback: CallbackQuery, state: FSMContext, service: 
     await answer_callback(callback, 'Сохранено' if action == 'save' else 'Отменено')
     user = await service.get_user(callback.from_user.id)
     await edit_message(callback.message, _task_text(task, user.timezone, service.now()),
-                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task)))
+                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task), inbox=task.remind_at is None))
 
 
 async def advance_hint(message: Message) -> None:
@@ -651,7 +654,7 @@ async def priority_callback(callback: CallbackQuery, state: FSMContext, service:
     await answer_callback(callback, 'Приоритет изменён')
     user = await service.get_user(callback.from_user.id)
     await edit_message(callback.message, _task_text(task, user.timezone, service.now()),
-                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task)))
+                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task), inbox=task.remind_at is None))
 
 
 async def sort_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
@@ -680,7 +683,7 @@ async def category_callback(callback: CallbackQuery, state: FSMContext, service:
     await answer_callback(callback, 'Категория изменена')
     user = await service.get_user(callback.from_user.id)
     await edit_message(callback.message, _task_text(task, user.timezone, service.now()),
-                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task)))
+                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task), inbox=task.remind_at is None))
 
 
 async def filter_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:

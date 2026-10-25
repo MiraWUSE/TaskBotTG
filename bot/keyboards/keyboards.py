@@ -89,11 +89,11 @@ def tasks_keyboard(tasks: list, total: int, page: int, today: bool, page_size: i
     return inline(rows)
 
 
-def task_keyboard(task_id: int, repeat: str, today: bool, page: int, version: str) -> InlineKeyboardMarkup:
+def task_keyboard(task_id: int, repeat: str, today: bool, page: int, version: str, *, inbox: bool = False) -> InlineKeyboardMarkup:
     suffix = f"{task_id}:{int(today)}:{page}:{version}"
     rows = [
         [("✏️ Изменить название", f"task:rename:{suffix}")],
-        [("📆 Изменить дату и время", f"task:time:{suffix}")],
+        [("📆 Назначить дату и время" if inbox else "📆 Изменить дату и время", f"task:time:{suffix}")],
         [('🚦 Приоритет', f'task:priority:{suffix}')],
         [('🗂 Категория', f'task:category:{suffix}')],
         [('⏳ Напомнить заранее', f'task:advance:{suffix}')],
@@ -104,7 +104,9 @@ def task_keyboard(task_id: int, repeat: str, today: bool, page: int, version: st
         rows.append([("🗑 Удалить", f"task:delete:{suffix}")])
     else:
         rows.append([("🛑 Остановить повторение", f"task:stop:{suffix}")])
-    rows.append([("◀️ К списку", f"list:{int(today)}:{page}")])
+    if inbox:
+        rows = [row for row in rows if not row[0][1].startswith('task:advance:')]
+    rows.append([("◀️ К списку", 'inbox:list:0' if inbox else f"list:{int(today)}:{page}")])
     return inline(rows)
 
 

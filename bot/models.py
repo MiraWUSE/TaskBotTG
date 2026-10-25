@@ -22,7 +22,7 @@ class Task:
     id: int
     user_id: int
     title: str
-    remind_at: datetime
+    remind_at: datetime | None
     repeat: str
     status: str
     timezone: str
