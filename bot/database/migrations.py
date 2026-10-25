@@ -64,7 +64,13 @@ class Migration:
     statements: tuple[str, ...]
 
 
-MIGRATIONS = (Migration(1, tuple(part.strip() for part in SCHEMA.split(";") if part.strip())),)
+MIGRATIONS = (
+    Migration(1, tuple(part.strip() for part in SCHEMA.split(";") if part.strip())),
+    Migration(2, (
+        "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('high','medium','low'))",
+        "ALTER TABLE users ADD COLUMN task_sort TEXT NOT NULL DEFAULT 'time' CHECK(task_sort IN ('time','priority'))",
+    )),
+)
 
 
 async def schema_version(connection) -> int:

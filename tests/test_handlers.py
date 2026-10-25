@@ -481,3 +481,17 @@ async def test_quick_does_not_steal_fsm_title_and_expired_confirmation(ui):
     await ui.click(button, message=source)
     assert (await ui.service.list_tasks(HUMAN.id))[1] == 0
     assert await ui.state() == QuickFlow.edit.state
+
+
+async def test_priority_ui_and_sort(ui):
+    await ui.text('Через 30 минут задача')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('task:priority:'))
+    buttons = [b.callback_data for row in ui.session.latest.reply_markup.inline_keyboard for b in row]
+    await ui.click(next(x for x in buttons if x.endswith(':high')))
+    assert '🔴' in ui.session.latest.text
+    tasks, _ = await ui.service.list_tasks(HUMAN.id)
+    assert tasks[0].priority == 'high'
+    await ui.text('/tasks')
+    await ui.click(ui.button('sort:priority:'))
+    assert (await ui.service.get_user(HUMAN.id)).task_sort == 'priority'

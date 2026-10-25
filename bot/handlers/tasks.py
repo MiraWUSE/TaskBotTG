@@ -29,6 +29,7 @@ from bot.keyboards.keyboards import (
     time_keyboard,
 )
 from bot.services.task_service import TaskNotFound, TaskService, ValidationError
+from bot.task_options import PRIORITIES, priority_icon
 from bot.utils.datetime_utils import combine_local, format_datetime, parse_datetime, parse_time, parse_user_date
 
 PAGE_SIZE = 6
@@ -74,7 +75,8 @@ def _task_version(task) -> str:
 def _task_text(task, timezone: str, now: datetime) -> str:
     repeat = REPEAT_LABELS.get(task.repeat, "Повторяется")
     text = (
-        f"📝 <b>{escape(task.title)}</b>\n\n"
+        f"{priority_icon(task.priority)} <b>{escape(task.title)}</b>\n\n"
+        f"🚦 {PRIORITIES[task.priority]}\n"
         f"📅 {format_datetime(task.remind_at, timezone)}\n"
         f"🌍 {escape(timezone)}\n"
         f"🔁 {repeat}\n"
@@ -365,11 +367,11 @@ async def _show_list(
         lines = [heading, f"🌍 {escape(user.timezone)} · Страница {page + 1}/{(total + PAGE_SIZE - 1) // PAGE_SIZE}"]
         for offset, task in enumerate(tasks, start=page * PAGE_SIZE + 1):
             lines.append(
-                f"\n{offset}. <b>{escape(task.title)}</b>\n"
+                f"\n{offset}. {priority_icon(task.priority)} <b>{escape(task.title)}</b>\n"
                 f"📅 {format_datetime(task.remind_at, user.timezone)} · {_status(task, service.now())}"
             )
         text = "\n".join(lines)
-    keyboard = tasks_keyboard(tasks, total, page, today, PAGE_SIZE)
+    keyboard = tasks_keyboard(tasks, total, page, today, PAGE_SIZE, user.task_sort)
     if edit:
         await edit_message(message, text, keyboard)
     else:
@@ -403,7 +405,7 @@ async def list_callback(callback: CallbackQuery, state: FSMContext, service: Tas
 async def task_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
     parts = (callback.data or "").split(":")
     try:
-        if len(parts) not in {5, 6} or parts[1] not in {"view", "rename", "time", "done", "delete", "stop"} or parts[3] not in {"0", "1"}:
+        if len(parts) not in {5, 6} or parts[1] not in {"view", "rename", "time", "priority", "done", "delete", "stop"} or parts[3] not in {"0", "1"}:
             raise ValueError
         task_id = _number(parts[2])
         page = _number(parts[4], zero=True)
@@ -418,6 +420,13 @@ async def task_callback(callback: CallbackQuery, state: FSMContext, service: Tas
     action = parts[1]
     today = parts[3] == "1"
     user = await service.get_user(callback.from_user.id)
+    if action == 'priority':
+        await answer_callback(callback)
+        await edit_message(callback.message, '🚦 Выбери приоритет задачи', inline(
+            [[(label, f'priority:{task.id}:{_task_version(task)}:{key}')]
+             for key, label in PRIORITIES.items()]
+            + [[('◀️ Назад', f'task:view:{task.id}:{int(today)}:{page}')]]))
+        return
     if action == "view":
         await state.clear()
         await answer_callback(callback)
@@ -543,6 +552,35 @@ async def reminder_callback(callback: CallbackQuery, state: FSMContext, service:
         await answer_callback(callback, "Не удалось перенести напоминание. Открой /tasks и выбери другое время.", alert=True)
 
 
+async def priority_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
+    parts = (callback.data or '').split(':')
+    try:
+        if len(parts) != 4 or parts[3] not in PRIORITIES:
+            raise ValueError
+        task = await service.get_task(callback.from_user.id, _number(parts[1]))
+        if parts[2] != _task_version(task):
+            raise ValueError
+        task = await service.set_priority(callback.from_user.id, task.id, parts[3])
+    except (ValueError, TaskNotFound):
+        await _stale(callback)
+        return
+    await state.clear()
+    await answer_callback(callback, 'Приоритет изменён')
+    user = await service.get_user(callback.from_user.id)
+    await edit_message(callback.message, _task_text(task, user.timezone, service.now()),
+                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task)))
+
+
+async def sort_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
+    parts = (callback.data or '').split(':')
+    if len(parts) != 3 or parts[1] not in {'time', 'priority'} or parts[2] not in {'0', '1'}:
+        await _stale(callback)
+        return
+    await service.set_task_sort(callback.from_user.id, parts[1])
+    await answer_callback(callback)
+    await _show_list(callback.message, callback.from_user.id, state, service, today=parts[2] == '1', edit=True)
+
+
 def register_navigation(router: Router) -> None:
     router.message.register(start_creation, Command("new"))
     router.message.register(start_creation, F.text == NEW_TASK)
@@ -553,6 +591,8 @@ def register_navigation(router: Router) -> None:
 
 
 def register_handlers(router: Router) -> None:
+    router.callback_query.register(priority_callback, F.data.startswith('priority:'))
+    router.callback_query.register(sort_callback, F.data.startswith('sort:'))
     router.callback_query.register(choose_quick_time, F.data.startswith("when:"))
     router.callback_query.register(choose_repeat, F.data.startswith("repeat:"))
     router.callback_query.register(cancel_flow, F.data.startswith("flow:"))

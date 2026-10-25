@@ -10,6 +10,7 @@ class User:
     chat_id: int
     timezone: str
     blocked: bool = False
+    task_sort: str = 'time'
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +26,7 @@ class Task:
     updated_at: datetime
     generation: int
     revision: int = 0
+    priority: str = 'medium'
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,3 +44,4 @@ class Delivery:
     claim_token: str | None
     message_id: int | None
     chat_id: int
+    priority: str = 'medium'

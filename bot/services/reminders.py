@@ -9,6 +9,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
 from bot.keyboards.keyboards import reminder_keyboard
 from bot.services.task_service import TaskService
+from bot.task_options import priority_icon
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class ReminderWorker:
                 try:
                     message = await self.bot.send_message(
                         chat_id=delivery.chat_id,
-                        text=f"🔔 <b>НАПОМИНАНИЕ!</b>\n\n📝 {escape(delivery.title)}\n\n⏰ Время выполнить задачу!",
+                        text=f"🔔 <b>НАПОМИНАНИЕ!</b>\n\n{priority_icon(delivery.priority)} {escape(delivery.title)}\n\n⏰ Время выполнить задачу!",
                         reply_markup=reminder_keyboard(delivery.id), parse_mode="HTML",
                     )
                 except asyncio.CancelledError:

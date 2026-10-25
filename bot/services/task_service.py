@@ -10,6 +10,7 @@ import aiosqlite
 
 from bot.database.db import Database
 from bot.models import Delivery, Task, User
+from bot.task_options import PRIORITIES
 from bot.utils.datetime_utils import local_day_bounds, next_occurrence, utc_now, validate_timezone
 
 UTC = timezone.utc
@@ -42,7 +43,7 @@ def _datetime(value: int) -> datetime:
 
 
 def _user(row: aiosqlite.Row) -> User:
-    return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]))
+    return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]), row['task_sort'])
 
 
 def _task(row: aiosqlite.Row) -> Task:
@@ -52,6 +53,7 @@ def _task(row: aiosqlite.Row) -> Task:
         repeat=row["repeat"], status=row["status"], timezone=row["timezone"],
         created_at=_datetime(row["created_at"]), updated_at=_datetime(row["updated_at"]),
         generation=row["generation"], revision=row["revision"],
+        priority=row['priority'],
     )
 
 
@@ -61,6 +63,7 @@ def _delivery(row: aiosqlite.Row) -> Delivery:
         repeat=row["repeat"], timezone=row["timezone"], scheduled_at=_datetime(row["scheduled_at"]),
         due_at=_datetime(row["due_at"]), status=row["status"], attempts=row["attempts"],
         claim_token=row["claim_token"], message_id=row["message_id"], chat_id=row["chat_id"],
+        priority=row['priority'],
     )
 
 
@@ -94,7 +97,7 @@ WITH task_candidates AS (
 )
 """
 DELIVERY_SELECT = """
-SELECT d.*, t.user_id, t.title, t.repeat, t.timezone, u.chat_id
+SELECT d.*, t.user_id, t.title, t.repeat, t.timezone, t.priority, u.chat_id
 FROM deliveries d JOIN tasks t ON t.id = d.task_id JOIN users u ON u.id = t.user_id
 """
 
@@ -173,11 +176,13 @@ class TaskService:
             return _user(await _one(connection, "SELECT * FROM users WHERE id=?", (user_id,)))
 
     async def create_task(self, user_id: int, title: str, remind_at: datetime,
-                          repeat: str = "none") -> Task:
+                          repeat: str = "none", *, priority: str = 'medium') -> Task:
         title = self._title(title)
         stamp = self._future(remind_at)
         if repeat not in REPEATS:
             raise ValidationError("Выберите допустимый вариант повторения.")
+        if priority not in PRIORITIES:
+            raise ValidationError('Выберите допустимый приоритет.')
         user = await self.get_user(user_id)
         if repeat == "weekdays":
             from zoneinfo import ZoneInfo
@@ -186,8 +191,8 @@ class TaskService:
         now = self._timestamp()
         async with self.database.transaction() as connection:
             cursor = await connection.execute(
-                """INSERT INTO tasks(user_id,title,remind_at,repeat,timezone,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?)""", (user_id, title, stamp, repeat, user.timezone, now, now),
+                """INSERT INTO tasks(user_id,title,remind_at,repeat,timezone,created_at,updated_at,priority)
+                   VALUES (?,?,?,?,?,?,?,?)""", (user_id, title, stamp, repeat, user.timezone, now, now, priority),
             )
             return _task(await self._owned_task(connection, user_id, cursor.lastrowid))
 
@@ -209,10 +214,14 @@ class TaskService:
         return _task(row)
 
     async def list_tasks(self, user_id: int, *, today: bool = False, page: int = 0,
-                         page_size: int = 6) -> tuple[list[Task], int]:
+                         page_size: int = 6, sort_by: str | None = None) -> tuple[list[Task], int]:
         if page < 0 or not 1 <= page_size <= 20:
             raise ValidationError("Неверная страница списка.")
         user = await self.get_user(user_id)
+        sort_by = user.task_sort if sort_by is None else sort_by
+        if sort_by not in {'time', 'priority'}:
+            raise ValidationError('Неизвестная сортировка.')
+        order = "display_at, id" if sort_by == 'time' else "CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, display_at, id"
         where = "user_id=? AND status='active'"
         values: list = [user_id]
         view = TASK_VIEW
@@ -225,8 +234,25 @@ class TaskService:
         async with self.database.read() as connection:
             total = (await _one(connection, view + f"SELECT COUNT(*) FROM task_view WHERE {where}", values))[0]
             rows = await _all(connection, view + f"SELECT * FROM task_view WHERE {where} "
-                              "ORDER BY display_at, id LIMIT ? OFFSET ?", (*values, page_size, page * page_size))
+                              f"ORDER BY {order} LIMIT ? OFFSET ?", (*values, page_size, page * page_size))
         return [_task(row) for row in rows], total
+
+    async def set_task_sort(self, user_id: int, sort_by: str) -> None:
+        if sort_by not in {'time', 'priority'}:
+            raise ValidationError('Неизвестная сортировка.')
+        await self.get_user(user_id)
+        async with self.database.transaction() as connection:
+            await connection.execute('UPDATE users SET task_sort=?,updated_at=? WHERE id=?',
+                                     (sort_by, self._timestamp(), user_id))
+
+    async def set_priority(self, user_id: int, task_id: int, priority: str) -> Task:
+        if priority not in PRIORITIES:
+            raise ValidationError('Выберите допустимый приоритет.')
+        async with self.task_lock(task_id), self.database.transaction() as connection:
+            await self._owned_task(connection, user_id, task_id)
+            await connection.execute('UPDATE tasks SET priority=?,revision=revision+1,updated_at=? WHERE id=? AND user_id=?',
+                                     (priority, self._timestamp(), task_id, user_id))
+        return await self.get_task(user_id, task_id)
 
     async def rename_task(self, user_id: int, task_id: int, title: str) -> Task:
         title = self._title(title)

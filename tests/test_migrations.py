@@ -84,3 +84,14 @@ async def test_newer_and_unversioned_databases_rejected(tmp_path):
             connection.execute(f'PRAGMA user_version={version}')
         with pytest.raises(RuntimeError):
             await Database(path).connect()
+
+
+async def test_v1_to_current_preserves_and_assigns_defaults(tmp_path):
+    path = tmp_path / 'v1.sqlite3'
+    legacy_database(path)
+    async with Database(path) as database:
+        async with database.read() as connection:
+            assert await migrations.schema_version(connection) == len(migrations.MIGRATIONS)
+            row = await (await connection.execute('SELECT title,priority FROM tasks')).fetchone()
+            assert row[:] == ('Сохранить', 'medium')
+            assert (await (await connection.execute('SELECT task_sort FROM users')).fetchone())[0] == 'time'
