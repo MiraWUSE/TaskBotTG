@@ -381,3 +381,5 @@ TaskBot/
 План будущих версий: [ROADMAP.md](ROADMAP.md). История текущего этапа разработки: [WORKLOG.md](WORKLOG.md).
 
 Итоги improvements v1, коммиты, проверки и ограничения: [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md).
+
+Итоги приоритета 2, миграции v5–v7 и проверки планирования: [PLANNING_REPORT.md](PLANNING_REPORT.md).
