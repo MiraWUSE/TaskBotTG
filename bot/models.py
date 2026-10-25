@@ -10,6 +10,8 @@ class User:
     chat_id: int
     timezone: str
     blocked: bool = False
+    task_sort: str = 'time'
+    task_category: str = 'all'
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +27,10 @@ class Task:
     updated_at: datetime
     generation: int
     revision: int = 0
+    priority: str = 'medium'
+    category: str = 'other'
+    category_label: str = '📌 Другое'
+    advance_offsets: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,3 +48,7 @@ class Delivery:
     claim_token: str | None
     message_id: int | None
     chat_id: int
+    priority: str = 'medium'
+    kind: str = 'main'
+    offset_minutes: int = 0
+    user_timezone: str = 'Europe/Moscow'

@@ -14,6 +14,7 @@ from aiogram.types import CallbackQuery, Chat, Message, Update, User
 from bot.database.db import Database
 from bot.handlers import create_router
 from bot.handlers.tasks import TaskFlow
+from bot.handlers.quick import QuickFlow
 from bot.services.task_service import TaskNotFound, TaskService
 
 HUMAN = User(id=11, is_bot=False, first_name="Тест")
@@ -433,3 +434,117 @@ async def test_notification_actions_preserve_recurring_series(ui, action):
     assert (await ui.service.get_task(HUMAN.id, task.id)).repeat == "daily"
     with pytest.raises(TaskNotFound):
         await ui.service.get_delivery(HUMAN.id, delivery.id)
+
+
+async def test_quick_confirmation_save_once_and_owner(ui):
+    await ui.text('Завтра в 15:00 сходить в магазин')
+    assert await ui.state() == QuickFlow.confirm.state
+    assert (await ui.service.list_tasks(HUMAN.id))[1] == 0
+    callback = ui.button('quick:')
+    source = ui.session.latest
+    stranger = User(id=99, is_bot=False, first_name='Другой')
+    await ui.click(callback, user=stranger, message=source)
+    assert (await ui.service.list_tasks(HUMAN.id))[1] == 0
+    await ui.click(callback, message=source)
+    tasks, total = await ui.service.list_tasks(HUMAN.id)
+    assert total == 1 and tasks[0].title == 'Сходить в магазин'
+    await ui.click(callback, message=source)
+    assert (await ui.service.list_tasks(HUMAN.id))[1] == 1
+
+
+async def test_quick_edit_cancel_and_clarification(ui):
+    await ui.text('Завтра в 15:00 магазин')
+    buttons = [b.callback_data for row in ui.session.latest.reply_markup.inline_keyboard for b in row]
+    await ui.click(next(x for x in buttons if x.endswith(':edit')))
+    await ui.text('Через 30 минут почта')
+    assert 'Почта' in ui.session.latest.text
+    buttons = [b.callback_data for row in ui.session.latest.reply_markup.inline_keyboard for b in row]
+    await ui.click(next(x for x in buttons if x.endswith(':cancel')))
+    assert (await ui.service.list_tasks(HUMAN.id))[1] == 0
+    await ui.text('25.11 в 8 дело')
+    assert await ui.state() == TaskFlow.when.state
+    await ui.text('25.11.2026 8:00')
+    assert await ui.state() == QuickFlow.confirm.state
+    await ui.click(ui.button('quick:'))
+    assert (await ui.service.list_tasks(HUMAN.id))[1] == 1
+
+
+async def test_quick_does_not_steal_fsm_title_and_expired_confirmation(ui):
+    await ui.text('/new')
+    await ui.text('Завтра в 15:00 магазин')
+    assert await ui.state() == TaskFlow.when.state
+    await ui.text('/cancel')
+    await ui.text('Через 1 минуту почта')
+    source = ui.session.latest
+    button = ui.button('quick:')
+    ui.clock[0] += timedelta(minutes=2)
+    await ui.click(button, message=source)
+    assert (await ui.service.list_tasks(HUMAN.id))[1] == 0
+    assert await ui.state() == QuickFlow.edit.state
+
+
+async def test_priority_ui_and_sort(ui):
+    await ui.text('Через 30 минут задача')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('task:priority:'))
+    buttons = [b.callback_data for row in ui.session.latest.reply_markup.inline_keyboard for b in row]
+    await ui.click(next(x for x in buttons if x.endswith(':high')))
+    assert '🔴' in ui.session.latest.text
+    tasks, _ = await ui.service.list_tasks(HUMAN.id)
+    assert tasks[0].priority == 'high'
+    await ui.text('/tasks')
+    await ui.click(ui.button('sort:priority:'))
+    assert (await ui.service.get_user(HUMAN.id)).task_sort == 'priority'
+
+
+async def test_category_ui_and_filter(ui):
+    await ui.text('Через 30 минут задача')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('task:category:'))
+    buttons = [b.callback_data for row in ui.session.latest.reply_markup.inline_keyboard for b in row]
+    await ui.click(next(x for x in buttons if x.endswith(':study')))
+    assert '🎓 Учёба' in ui.session.latest.text
+    await ui.text('/tasks')
+    await ui.click(ui.button('filters:'))
+    await ui.click(ui.button('filter:work:'))
+    assert 'Задач пока нет' in ui.session.latest.text
+    await ui.click(ui.button('filters:'))
+    await ui.click(ui.button('filter:all:'))
+    assert 'Задача' in ui.session.latest.text
+
+
+async def test_advance_ui_multiple_save_clear_and_cancel(ui):
+    await ui.text('Через 2 часа задача')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('task:advance:'))
+    def advance_button(value):
+        return next(b.callback_data for row in ui.session.latest.reply_markup.inline_keyboard for b in row if b.callback_data.endswith(':' + value))
+    await ui.click(advance_button('5'))
+    await ui.click(advance_button('60'))
+    tasks, _ = await ui.service.list_tasks(HUMAN.id)
+    assert tasks[0].advance_offsets == ()
+    await ui.click(advance_button('save'))
+    assert (await ui.service.get_task(HUMAN.id, tasks[0].id)).advance_offsets == (5,60)
+    await ui.click(ui.button('task:advance:'))
+    await ui.click(advance_button('none'))
+    await ui.click(advance_button('cancel'))
+    assert (await ui.service.get_task(HUMAN.id, tasks[0].id)).advance_offsets == (5,60)
+    await ui.click(ui.button('task:advance:'))
+    await ui.click(advance_button('none'))
+    await ui.click(advance_button('save'))
+    assert (await ui.service.get_task(HUMAN.id, tasks[0].id)).advance_offsets == ()
+
+
+async def test_advance_stale_and_foreign_callback(ui):
+    await ui.text('Через 2 часа задача')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('task:advance:'))
+    source = ui.session.latest
+    choice = ui.button('advance:')
+    other = User(id=99, is_bot=False, first_name='Чужой')
+    await ui.click(choice, message=source, user=other)
+    task = (await ui.service.list_tasks(HUMAN.id))[0][0]
+    assert task.advance_offsets == ()
+    await ui.service.rename_task(HUMAN.id, task.id, 'Изменено')
+    await ui.click(choice, message=source)
+    assert (await ui.service.get_task(HUMAN.id, task.id)).advance_offsets == ()

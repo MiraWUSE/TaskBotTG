@@ -6,6 +6,7 @@ from aiogram.types import (
     KeyboardButton,
     ReplyKeyboardMarkup,
 )
+from bot.task_options import priority_icon
 
 NEW_TASK = "➕ Создать задачу"
 MY_TASKS = "📋 Мои задачи"
@@ -63,14 +64,15 @@ def repeat_keyboard(nonce: str) -> InlineKeyboardMarkup:
     )
 
 
-def tasks_keyboard(tasks: list, total: int, page: int, today: bool, page_size: int) -> InlineKeyboardMarkup:
+def tasks_keyboard(tasks: list, total: int, page: int, today: bool, page_size: int,
+                   sort_by: str = 'time') -> InlineKeyboardMarkup:
     kind = int(today)
     rows = []
     for task in tasks:
         title = task.title.replace("\n", " ")
         if len(title) > 38:
             title = title[:37] + "…"
-        rows.append([(f"📝 {title}", f"task:view:{task.id}:{kind}:{page}")])
+        rows.append([(f"{priority_icon(task.priority)} {title}", f"task:view:{task.id}:{kind}:{page}")])
     navigation = []
     if page:
         navigation.append(("◀️ Назад", f"list:{kind}:{page - 1}"))
@@ -79,6 +81,9 @@ def tasks_keyboard(tasks: list, total: int, page: int, today: bool, page_size: i
     if navigation:
         rows.append(navigation)
     rows.append([("🔄 Обновить", f"list:{kind}:{page}")])
+    rows.append([('⏰ По времени' if sort_by == 'priority' else '🚦 По приоритету',
+                  f"sort:{'time' if sort_by == 'priority' else 'priority'}:{kind}")])
+    rows.append([('🗂 Категории', f'filters:{kind}')])
     return inline(rows)
 
 
@@ -87,6 +92,9 @@ def task_keyboard(task_id: int, repeat: str, today: bool, page: int, version: st
     rows = [
         [("✏️ Изменить название", f"task:rename:{suffix}")],
         [("📆 Изменить дату и время", f"task:time:{suffix}")],
+        [('🚦 Приоритет', f'task:priority:{suffix}')],
+        [('🗂 Категория', f'task:category:{suffix}')],
+        [('⏳ Напомнить заранее', f'task:advance:{suffix}')],
         [("✅ Выполнено", f"task:done:{suffix}")],
     ]
     if repeat == "none":

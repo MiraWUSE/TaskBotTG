@@ -1,0 +1,34 @@
+name: Python checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Check dependency compatibility
+        run: python -m pip check
+      - name: Check syntax and code quality
+        run: |
+          python -m compileall -q bot tests main.py
+          python -m ruff check .
+      - name: Verify migrations on temporary databases
+        run: python -m pytest tests/test_migrations.py -q -W error
+      - name: Run all offline tests
+        run: python -m pytest -q -W error

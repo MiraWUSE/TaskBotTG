@@ -8,6 +8,7 @@ from aiogram.types import Message
 from bot.keyboards.keyboards import HELP, MAIN_MENU, main_menu
 
 HELP_TEXT = (
+    "Быстро: отправь «Завтра в 15:00 сходить в магазин» и подтверди сохранение.\n\n"
     "❓ <b>Как пользоваться ботом</b>\n\n"
     "Нажми «➕ Создать задачу», введи название и выбери время. "
     "Например: <code>25.10.2026 8:00</code> или <code>завтра в 9:30</code>. "
