@@ -548,3 +548,14 @@ async def test_advance_stale_and_foreign_callback(ui):
     await ui.service.rename_task(HUMAN.id, task.id, 'Изменено')
     await ui.click(choice, message=source)
     assert (await ui.service.get_task(HUMAN.id, task.id)).advance_offsets == ()
+
+
+async def test_summary_settings_ui(ui):
+    await ui.text('/settings')
+    await ui.click(ui.button('summary:show'))
+    await ui.click(ui.button('summary:enable'))
+    assert (await ui.service.get_user(HUMAN.id)).summary_enabled
+    await ui.click(ui.button('summary:time'))
+    await ui.text('25:00')
+    await ui.text('9:15')
+    assert (await ui.service.get_user(HUMAN.id)).summary_time == '09:15'

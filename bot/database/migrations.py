@@ -102,6 +102,20 @@ MIGRATIONS = (
         'CREATE INDEX deliveries_due ON deliveries(status,next_attempt_at,lease_until)',
         'CREATE INDEX deliveries_task ON deliveries(task_id,generation,status,due_at)',
     )),
+    Migration(5, (
+        'ALTER TABLE users ADD COLUMN summary_enabled INTEGER NOT NULL DEFAULT 0 CHECK(summary_enabled IN (0,1))',
+        "ALTER TABLE users ADD COLUMN summary_time TEXT NOT NULL DEFAULT '08:00'",
+        'ALTER TABLE users ADD COLUMN summary_empty INTEGER NOT NULL DEFAULT 0 CHECK(summary_empty IN (0,1))',
+        'ALTER TABLE users ADD COLUMN summary_from INTEGER NOT NULL DEFAULT 0',
+        '''CREATE TABLE daily_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id),
+            local_day TEXT NOT NULL, scheduled_at INTEGER NOT NULL, text TEXT NOT NULL, timezone TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending','sending','sent','skipped')),
+            attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL,
+            lease_until INTEGER, claim_token TEXT, message_id INTEGER, sent_at INTEGER,
+            UNIQUE(user_id,local_day)
+        )''',
+    )),
 )
 
 

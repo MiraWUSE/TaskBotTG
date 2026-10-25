@@ -43,7 +43,8 @@ def _datetime(value: int) -> datetime:
 
 
 def _user(row: aiosqlite.Row) -> User:
-    return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]), row['task_sort'], row['task_category'])
+    return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]), row['task_sort'], row['task_category'],
+                bool(row['summary_enabled']), row['summary_time'], bool(row['summary_empty']))
 
 
 def _task(row: aiosqlite.Row) -> Task:
@@ -172,13 +173,14 @@ class TaskService:
             timezone = validate_timezone(timezone)
         except ValueError as error:
             raise ValidationError(str(error)) from error
-        async with self.database.transaction() as connection:
+        async with self.task_lock(-user_id), self.database.transaction() as connection:
             cursor = await connection.execute(
                 "UPDATE users SET timezone=?, updated_at=? WHERE id=?",
                 (timezone, self._timestamp(), user_id),
             )
             if not cursor.rowcount:
                 raise ValidationError("Сначала отправьте /start.")
+            await connection.execute("UPDATE daily_summaries SET status='skipped',claim_token=NULL,lease_until=NULL WHERE user_id=? AND status IN ('pending','sending')", (user_id,))
             return _user(await _one(connection, "SELECT * FROM users WHERE id=?", (user_id,)))
 
     async def create_task(self, user_id: int, title: str, remind_at: datetime,

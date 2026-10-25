@@ -12,6 +12,9 @@ class User:
     blocked: bool = False
     task_sort: str = 'time'
     task_category: str = 'all'
+    summary_enabled: bool = False
+    summary_time: str = '08:00'
+    summary_empty: bool = False
 
 
 @dataclass(frozen=True, slots=True)

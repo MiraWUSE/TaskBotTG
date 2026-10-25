@@ -126,4 +126,4 @@ def snooze_keyboard(delivery_id: int) -> InlineKeyboardMarkup:
 
 
 def settings_keyboard() -> InlineKeyboardMarkup:
-    return inline([[("🌍 Изменить часовой пояс", "settings:timezone")]])
+    return inline([[("🌍 Изменить часовой пояс", "settings:timezone")], [('☀️ Утренняя сводка', 'summary:show')]])
