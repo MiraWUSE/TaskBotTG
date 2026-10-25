@@ -177,6 +177,14 @@ MIGRATIONS = (
         )''',
         'CREATE INDEX habits_owner ON habits(user_id,active,id)',
     )),
+    Migration(10, (
+        'ALTER TABLE users ADD COLUMN quiet_enabled INTEGER NOT NULL DEFAULT 0 CHECK(quiet_enabled IN (0,1))',
+        "ALTER TABLE users ADD COLUMN quiet_start TEXT NOT NULL DEFAULT '23:00'",
+        "ALTER TABLE users ADD COLUMN quiet_end TEXT NOT NULL DEFAULT '08:00'",
+        'ALTER TABLE users ADD COLUMN quiet_exempt_high INTEGER NOT NULL DEFAULT 0 CHECK(quiet_exempt_high IN (0,1))',
+        'ALTER TABLE deliveries ADD COLUMN quiet_until INTEGER',
+        'ALTER TABLE daily_summaries ADD COLUMN quiet_until INTEGER',
+    )),
 )
 
 

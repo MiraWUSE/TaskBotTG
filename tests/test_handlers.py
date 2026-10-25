@@ -649,3 +649,17 @@ async def test_habits_ui_check_undo_history_and_archive(ui):
     await ui.click(ui.button('habit:restore:'))
     assert ui.button('habit:done:')
     assert (await ui.service.list_tasks(HUMAN.id))[1]==0
+
+
+async def test_quiet_hours_ui_settings_and_range_validation(ui):
+    await ui.text('/settings')
+    await ui.click(ui.button('quiet:show'))
+    await ui.click(ui.button('quiet:enable'))
+    assert (await ui.service.get_user(HUMAN.id)).quiet_enabled
+    await ui.click(ui.button('quiet:except_yes'))
+    assert (await ui.service.get_user(HUMAN.id)).quiet_exempt_high
+    await ui.click(ui.button('quiet:range'))
+    await ui.text('25:00-8:00')
+    await ui.text('22:30–7:15')
+    user=await ui.service.get_user(HUMAN.id)
+    assert (user.quiet_start,user.quiet_end)==('22:30','07:15')

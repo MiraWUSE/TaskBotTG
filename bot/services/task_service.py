@@ -44,7 +44,8 @@ def _datetime(value: int) -> datetime:
 
 def _user(row: aiosqlite.Row) -> User:
     return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]), row['task_sort'], row['task_category'],
-                bool(row['summary_enabled']), row['summary_time'], bool(row['summary_empty']))
+                bool(row['summary_enabled']), row['summary_time'], bool(row['summary_empty']),
+                bool(row['quiet_enabled']),row['quiet_start'],row['quiet_end'],bool(row['quiet_exempt_high']))
 
 
 def _task(row: aiosqlite.Row) -> Task:
@@ -187,6 +188,7 @@ class TaskService:
             if not cursor.rowcount:
                 raise ValidationError("Сначала отправьте /start.")
             await connection.execute("UPDATE daily_summaries SET status='skipped',claim_token=NULL,lease_until=NULL WHERE user_id=? AND status IN ('pending','sending')", (user_id,))
+            await self._wake_quiet(connection,user_id,self._timestamp())
             return _user(await _one(connection, "SELECT * FROM users WHERE id=?", (user_id,)))
 
     async def create_task(self, user_id: int, title: str, remind_at: datetime | None,
@@ -276,6 +278,8 @@ class TaskService:
             await self._owned_task(connection, user_id, task_id)
             await connection.execute('UPDATE tasks SET priority=?,revision=revision+1,updated_at=? WHERE id=? AND user_id=?',
                                      (priority, self._timestamp(), task_id, user_id))
+            await connection.execute("UPDATE deliveries SET next_attempt_at=?,quiet_until=NULL WHERE task_id=? AND quiet_until IS NOT NULL AND status='pending'",
+                                     (self._timestamp(),task_id))
         return await self.get_task(user_id, task_id)
 
     @staticmethod
@@ -558,12 +562,25 @@ class TaskService:
                 """, (delivery.id, delivery.claim_token, self._timestamp(), self._timestamp()))
         return _delivery(row) if row is not None else None
 
+    @staticmethod
+    async def _wake_quiet(connection,user_id: int,now: int) -> None:
+        await connection.execute('''UPDATE deliveries SET next_attempt_at=?,quiet_until=NULL
+            WHERE quiet_until IS NOT NULL AND status='pending' AND task_id IN (SELECT id FROM tasks WHERE user_id=?)''',(now,user_id))
+        await connection.execute("UPDATE daily_summaries SET next_attempt_at=?,quiet_until=NULL WHERE user_id=? AND quiet_until IS NOT NULL AND status='pending'",(now,user_id))
+
+    async def defer_for_quiet(self,delivery: Delivery,until: datetime) -> None:
+        async with self.database.transaction() as connection:
+            await connection.execute('''UPDATE deliveries SET status='pending',next_attempt_at=?,quiet_until=?,
+                attempts=MAX(0,attempts-1),lease_until=NULL,claim_token=NULL,updated_at=?
+                WHERE id=? AND claim_token=? AND status='sending' ''',
+                (int(until.timestamp()),int(until.timestamp()),self._timestamp(),delivery.id,delivery.claim_token))
+
     async def acknowledge_delivery(self, delivery: Delivery, message_id: int) -> bool:
         now = self._timestamp()
         async with self.database.transaction() as connection:
             cursor = await connection.execute(
                 """UPDATE deliveries SET status='sent',message_id=?,sent_at=?,lease_until=NULL,
-                   claim_token=NULL,last_error=NULL,updated_at=? WHERE id=? AND claim_token=? AND status='sending'""",
+                   claim_token=NULL,last_error=NULL,quiet_until=NULL,updated_at=? WHERE id=? AND claim_token=? AND status='sending'""",
                 (message_id, now, now, delivery.id, delivery.claim_token),
             )
             return bool(cursor.rowcount)
@@ -574,7 +591,7 @@ class TaskService:
         async with self.database.transaction() as connection:
             cursor = await connection.execute(
                 """UPDATE deliveries SET status='pending',next_attempt_at=?,lease_until=NULL,
-                   claim_token=NULL,last_error=?,updated_at=? WHERE id=? AND claim_token=? AND status='sending'""",
+                   claim_token=NULL,last_error=?,quiet_until=NULL,updated_at=? WHERE id=? AND claim_token=? AND status='sending'""",
                 (now + max(1, delay), reason[:100], now, delivery.id, delivery.claim_token),
             )
             if blocked and cursor.rowcount:

@@ -1,6 +1,7 @@
 """Per-user IANA timezone selection."""
 
 from html import escape
+import re
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -11,6 +12,7 @@ from aiogram.types import CallbackQuery, Message
 from bot.handlers.middleware import answer_callback, edit_message
 from bot.keyboards.keyboards import SETTINGS, inline, main_menu, settings_keyboard
 from bot.services.summaries import SummaryService
+from bot.services.quiet_hours import QuietHoursService
 from bot.services.task_service import TaskService, ValidationError
 from bot.utils.datetime_utils import validate_timezone
 
@@ -18,6 +20,7 @@ from bot.utils.datetime_utils import validate_timezone
 class TimezoneFlow(StatesGroup):
     timezone = State()
     summary_time = State()
+    quiet_range = State()
 
 
 async def show_settings(message: Message, state: FSMContext, service: TaskService) -> None:
@@ -69,6 +72,8 @@ def register_navigation(router: Router) -> None:
 
 
 def register_handlers(router: Router) -> None:
+    router.callback_query.register(quiet_callback,F.data.startswith('quiet:'))
+    router.message.register(save_quiet_range,TimezoneFlow.quiet_range)
     router.callback_query.register(summary_callback, F.data.startswith('summary:'))
     router.message.register(save_summary_time, TimezoneFlow.summary_time)
     router.callback_query.register(timezone_prompt, F.data == "settings:timezone")
@@ -108,3 +113,43 @@ async def save_summary_time(message: Message, state: FSMContext, service: TaskSe
         return
     await state.clear()
     await message.answer('✅ Время сводки сохранено. Изменения начнут действовать со следующего будущего времени отправки.', reply_markup=settings_keyboard())
+
+
+async def quiet_callback(callback: CallbackQuery,state: FSMContext,service: TaskService) -> None:
+    action=(callback.data or '').removeprefix('quiet:')
+    if action not in {'show','enable','disable','range','except_yes','except_no'}:
+        await answer_callback(callback,'Кнопка устарела.',alert=True)
+        return
+    await state.clear()
+    if action=='range':
+        await state.set_state(TimezoneFlow.quiet_range)
+        await answer_callback(callback)
+        await callback.message.answer('🌙 Введи интервал, например 23:00–08:00. Можно через дефис: 23:00-8:00. В личном часовом поясе. Отмена: /cancel')
+        return
+    quiet=QuietHoursService(service)
+    if action in {'enable','disable'}:
+        await quiet.configure(callback.from_user.id,enabled=action=='enable')
+    elif action.startswith('except_'):
+        await quiet.configure(callback.from_user.id,exempt_high=action=='except_yes')
+    user=await service.get_user(callback.from_user.id)
+    await answer_callback(callback)
+    await edit_message(callback.message,
+        f'🌙 <b>Тихие часы</b>\n\n{"Включены" if user.quiet_enabled else "Выключены"} · {user.quiet_start}–{user.quiet_end}\n'
+        f'🌍 {escape(user.timezone)}\n🔴 Высокий приоритет: {"пропускать сразу" if user.quiet_exempt_high else "ждать окончания"}\n\n'
+        'Обычные напоминания и сводка ждут окончания интервала. Исходный срок задачи сохраняется.',
+        inline([[('Выключить' if user.quiet_enabled else 'Включить','quiet:disable' if user.quiet_enabled else 'quiet:enable')],
+                [('⏰ Изменить интервал','quiet:range')],
+                [('🔴 Тоже откладывать' if user.quiet_exempt_high else '🔴 Разрешить высокий приоритет','quiet:except_no' if user.quiet_exempt_high else 'quiet:except_yes')]]))
+
+
+async def save_quiet_range(message: Message,state: FSMContext,service: TaskService) -> None:
+    try:
+        match=re.fullmatch(r'\s*(.+?)\s*[-–—]\s*(.+?)\s*',message.text or '')
+        if match is None:
+            raise ValidationError('Укажи интервал, например 23:00–08:00.')
+        await QuietHoursService(service).configure(message.from_user.id,start=match[1],end=match[2])
+    except ValidationError as error:
+        await message.answer(str(error)+' Отмена: /cancel')
+        return
+    await state.clear()
+    await message.answer('✅ Интервал сохранён. Включение и исключения — в настройках тихих часов.',reply_markup=settings_keyboard())
