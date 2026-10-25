@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import asyncio
 
@@ -8,7 +9,7 @@ from bot.database.db import Database
 
 
 def legacy_database(path):
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.executescript(migrations.SCHEMA)
         connection.execute("PRAGMA user_version=1")
         connection.execute("INSERT INTO users VALUES (1,1,'Asia/Tokyo',0,1,1)")
@@ -42,7 +43,7 @@ async def test_legacy_upgrades_in_order_and_backup_preserves_data(tmp_path, monk
                 assert (await (await connection.execute('SELECT COUNT(*) FROM deliveries')).fetchone())[0] == 1
     backups = list((tmp_path / 'backups').glob('*.sqlite3'))
     assert len(backups) == 1
-    with sqlite3.connect(backups[0]) as connection:
+    with closing(sqlite3.connect(backups[0])) as connection, connection:
         assert connection.execute('PRAGMA user_version').fetchone()[0] == 1
         assert connection.execute('SELECT title FROM tasks').fetchone()[0] == 'Сохранить'
 
@@ -56,7 +57,7 @@ async def test_failed_or_interrupted_migration_rolls_back_all_changes(tmp_path, 
     ))
     with pytest.raises(sqlite3.OperationalError):
         await Database(path).connect()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert connection.execute('PRAGMA user_version').fetchone()[0] == 1
         assert 'marker' not in [row[1] for row in connection.execute('PRAGMA table_info(tasks)')]
         assert connection.execute('SELECT title FROM tasks').fetchone()[0] == 'Сохранить'
@@ -73,14 +74,14 @@ async def test_backup_failure_prevents_upgrade(tmp_path, monkeypatch):
     monkeypatch.setattr(migrations, 'backup_database', fail)
     with pytest.raises(OSError):
         await Database(path).connect()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert connection.execute('PRAGMA user_version').fetchone()[0] == 1
 
 
 async def test_newer_and_unversioned_databases_rejected(tmp_path):
     for version in (0, 999):
         path = tmp_path / f'{version}.sqlite3'
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection, connection:
             connection.execute('CREATE TABLE unknown (value TEXT)')
             connection.execute(f'PRAGMA user_version={version}')
         with pytest.raises(RuntimeError):
@@ -103,7 +104,7 @@ async def test_v1_to_current_preserves_and_assigns_defaults(tmp_path):
 @pytest.mark.parametrize('version', [1,2,3])
 async def test_all_released_schemas_upgrade_without_losing_delivery_states(tmp_path, version):
     path = tmp_path / f'old-v{version}.sqlite3'
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         for migration in migrations.MIGRATIONS[:version]:
             for statement in migration.statements:
                 connection.execute(statement)
@@ -148,6 +149,6 @@ async def test_cancellation_rolls_back_ddl_and_version(tmp_path, monkeypatch):
     monkeypatch.setattr(aiosqlite.Connection, 'execute', interrupted)
     with pytest.raises(asyncio.CancelledError):
         await Database(path).connect()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert connection.execute('PRAGMA user_version').fetchone()[0] == 1
         assert 'priority' not in [row[1] for row in connection.execute('PRAGMA table_info(tasks)')]

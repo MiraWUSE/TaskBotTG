@@ -1,3 +1,4 @@
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 
@@ -9,7 +10,7 @@ from bot.backup import backup_database, main
 def test_online_backup_includes_committed_wal_and_keeps_source_usable(tmp_path: Path) -> None:
     source = tmp_path / "bot.sqlite3"
     output = tmp_path / "backups" / "copy.sqlite3"
-    with sqlite3.connect(source) as connection:
+    with closing(sqlite3.connect(source)) as connection, connection:
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA wal_autocheckpoint=0")
         connection.execute("CREATE TABLE tasks (title TEXT NOT NULL)")
@@ -21,10 +22,10 @@ def test_online_backup_includes_committed_wal_and_keeps_source_usable(tmp_path: 
         connection.execute("INSERT INTO tasks VALUES (?)", ("После копирования",))
         connection.commit()
 
-    with sqlite3.connect(output) as copy:
+    with closing(sqlite3.connect(output)) as copy, copy:
         assert copy.execute("SELECT title FROM tasks").fetchall() == [("Принять витамины",)]
         assert copy.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-    with sqlite3.connect(source) as connection:
+    with closing(sqlite3.connect(source)) as connection, connection:
         assert connection.execute("SELECT count(*) FROM tasks").fetchone() == (2,)
 
 
@@ -53,13 +54,13 @@ def test_missing_database_is_not_created(tmp_path: Path) -> None:
 
 def test_backup_rejects_source_as_destination(tmp_path: Path) -> None:
     source = tmp_path / "source.sqlite3"
-    with sqlite3.connect(source) as connection:
+    with closing(sqlite3.connect(source)) as connection, connection:
         connection.execute("CREATE TABLE tasks (id INTEGER)")
 
     with pytest.raises(ValueError):
         backup_database(source, source)
 
-    with sqlite3.connect(source) as connection:
+    with closing(sqlite3.connect(source)) as connection, connection:
         assert connection.execute("SELECT count(*) FROM tasks").fetchone() == (0,)
 
 
