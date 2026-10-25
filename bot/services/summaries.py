@@ -12,6 +12,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from bot.services.task_service import TaskService, ValidationError, _all, _one
 from bot.task_options import priority_icon
 from bot.utils.datetime_utils import _local_to_utc, parse_time
+from bot.utils.quiet_hours import quiet_until
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,15 @@ class SummaryService:
                 (row['id'],row['claim_token'],self.tasks._timestamp()))
         today = self.tasks.now().astimezone(ZoneInfo(row['timezone'])).date().isoformat()
         if current is None or row['local_day'] != today:
+            return 0
+        user=await self.tasks.get_user(row['user_id'])
+        until=quiet_until(user,self.tasks.now())
+        if until is not None:
+            stamp=int(until.timestamp())
+            async with self.tasks.database.transaction() as connection:
+                await connection.execute('''UPDATE daily_summaries SET status='pending',next_attempt_at=?,quiet_until=?,
+                    attempts=MAX(0,attempts-1),lease_until=NULL,claim_token=NULL WHERE id=? AND claim_token=? AND status='sending' ''',
+                    (stamp,stamp,row['id'],row['claim_token']))
             return 0
         try:
             message = await bot.send_message(chat_id=row['chat_id'],text=row['text'],parse_mode='HTML')

@@ -13,6 +13,7 @@ from bot.services.task_service import TaskService
 from bot.services.summaries import SummaryService
 from bot.task_options import priority_icon
 from bot.utils.datetime_utils import format_datetime
+from bot.utils.quiet_hours import quiet_until
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +41,14 @@ class ReminderWorker:
                 break
             # Изменение времени/удаление ждёт окончания уже начатого запроса.
             # Изменения до захвата lock проверяются заново перед отправкой.
-            async with self.service.task_lock(claimed.task_id):
+            async with self.service.task_lock(claimed.task_id), self.service.task_lock(-claimed.user_id):
                 delivery = await self.service.refresh_claim(claimed)
                 if delivery is None:
+                    continue
+                user=await self.service.get_user(delivery.user_id)
+                until=quiet_until(user,self.service.now(),priority=delivery.priority)
+                if until is not None:
+                    await self.service.defer_for_quiet(delivery,until)
                     continue
                 if delivery.kind == 'advance':
                     remaining = max(1, math.ceil((delivery.scheduled_at - self.service.now()).total_seconds() / 60))

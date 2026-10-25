@@ -101,7 +101,7 @@ async def test_v1_to_current_preserves_and_assigns_defaults(tmp_path):
             assert (await (await connection.execute('SELECT COUNT(*) FROM categories')).fetchone())[0] == 5
 
 
-@pytest.mark.parametrize('version', [1,2,3,4,5,6])
+@pytest.mark.parametrize('version', [1,2,3,4,5,6,7,8,9])
 async def test_all_released_schemas_upgrade_without_losing_delivery_states(tmp_path, version):
     path = tmp_path / f'old-v{version}.sqlite3'
     with closing(sqlite3.connect(path)) as connection, connection:

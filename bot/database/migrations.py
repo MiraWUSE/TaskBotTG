@@ -149,6 +149,42 @@ MIGRATIONS = (
         'CREATE INDEX tasks_due ON tasks(status,remind_at)',
         'CREATE INDEX tasks_category ON tasks(user_id,category,status)',
     ), rebuild_tables=True),
+    Migration(8, (
+        '''CREATE TABLE task_completions (
+            task_id INTEGER NOT NULL REFERENCES tasks(id), user_id INTEGER NOT NULL REFERENCES users(id),
+            generation INTEGER NOT NULL, occurrence_key TEXT NOT NULL, scheduled_at INTEGER,
+            completed_at INTEGER NOT NULL, PRIMARY KEY(task_id,generation,occurrence_key)
+        )''',
+        '''INSERT OR IGNORE INTO task_completions SELECT d.task_id,t.user_id,d.generation,
+            CAST(d.scheduled_at AS TEXT),d.scheduled_at,d.updated_at
+            FROM deliveries d JOIN tasks t ON t.id=d.task_id WHERE d.kind='main' AND d.status='completed' ''',
+        '''INSERT OR IGNORE INTO task_completions SELECT id,user_id,generation,
+            COALESCE(CAST(remind_at AS TEXT),'inbox'),remind_at,updated_at
+            FROM tasks WHERE repeat='none' AND status='completed' ''',
+        'CREATE INDEX completions_owner_time ON task_completions(user_id,completed_at)',
+    )),
+    Migration(9, (
+        '''CREATE TABLE habits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id),
+            title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),
+            active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),revision INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+        )''',
+        '''CREATE TABLE habit_checks (
+            habit_id INTEGER NOT NULL REFERENCES habits(id),local_day TEXT NOT NULL,
+            timezone TEXT NOT NULL,checked_at INTEGER NOT NULL,done INTEGER NOT NULL DEFAULT 1 CHECK(done IN (0,1)),
+            PRIMARY KEY(habit_id,local_day)
+        )''',
+        'CREATE INDEX habits_owner ON habits(user_id,active,id)',
+    )),
+    Migration(10, (
+        'ALTER TABLE users ADD COLUMN quiet_enabled INTEGER NOT NULL DEFAULT 0 CHECK(quiet_enabled IN (0,1))',
+        "ALTER TABLE users ADD COLUMN quiet_start TEXT NOT NULL DEFAULT '23:00'",
+        "ALTER TABLE users ADD COLUMN quiet_end TEXT NOT NULL DEFAULT '08:00'",
+        'ALTER TABLE users ADD COLUMN quiet_exempt_high INTEGER NOT NULL DEFAULT 0 CHECK(quiet_exempt_high IN (0,1))',
+        'ALTER TABLE deliveries ADD COLUMN quiet_until INTEGER',
+        'ALTER TABLE daily_summaries ADD COLUMN quiet_until INTEGER',
+    )),
 )
 
 

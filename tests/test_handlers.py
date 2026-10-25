@@ -622,3 +622,57 @@ async def test_inbox_ui_capture_card_assign_date_and_no_fsm_stealing(ui):
     await ui.text('/new')
     await ui.text('Изучить Docker')
     assert await ui.state() == TaskFlow.when.state
+
+
+async def test_statistics_ui_is_personal_and_period_switches(ui):
+    await ui.text('/stats')
+    assert 'Статистика' in ui.session.latest.text
+    await ui.click(ui.button('stats:month'))
+    assert 'за месяц' in ui.session.latest.text
+    await ui.click('stats:invalid')
+    assert await ui.state() is None
+
+
+async def test_habits_ui_check_undo_history_and_archive(ui):
+    await ui.text('/habits')
+    await ui.click(ui.button('habit:new'))
+    await ui.text('Читать ежедневно')
+    await ui.click(ui.button('habit:done:'))
+    assert 'Сегодня выполнено' in ui.session.latest.text
+    await ui.click(ui.button('habit:history:'))
+    assert '2026-10-23' in ui.session.latest.text
+    await ui.click(ui.button('habit:view:'))
+    await ui.click(ui.button('habit:undo:'))
+    await ui.click(ui.button('habit:archive:'))
+    await ui.click(ui.button('habit:confirm:'))
+    assert 'В архиве' in ui.session.latest.text
+    await ui.click(ui.button('habit:restore:'))
+    assert ui.button('habit:done:')
+    assert (await ui.service.list_tasks(HUMAN.id))[1]==0
+
+
+async def test_quiet_hours_ui_settings_and_range_validation(ui):
+    await ui.text('/settings')
+    await ui.click(ui.button('quiet:show'))
+    await ui.click(ui.button('quiet:enable'))
+    assert (await ui.service.get_user(HUMAN.id)).quiet_enabled
+    await ui.click(ui.button('quiet:except_yes'))
+    assert (await ui.service.get_user(HUMAN.id)).quiet_exempt_high
+    await ui.click(ui.button('quiet:range'))
+    await ui.text('25:00-8:00')
+    await ui.text('22:30–7:15')
+    user=await ui.service.get_user(HUMAN.id)
+    assert (user.quiet_start,user.quiet_end)==('22:30','07:15')
+
+
+async def test_habit_history_exits_an_active_creation_dialog(ui):
+    await ui.text('/habits')
+    await ui.click(ui.button('habit:new'))
+    await ui.text('Читать')
+    source=ui.session.latest
+    history=ui.button('habit:history:')
+    await ui.text('/habits')
+    await ui.click(ui.button('habit:new'))
+    assert await ui.state() is not None
+    await ui.click(history,message=source)
+    assert await ui.state() is None

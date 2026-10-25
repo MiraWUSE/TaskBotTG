@@ -22,7 +22,8 @@ MONTHS = ('','Январь','Февраль','Март','Апрель','Май',
 
 async def planning_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer('🗓 Планирование', reply_markup=inline([[('📆 Календарь', 'cal:open')],[('📥 Входящие','inbox:open')]]))
+    await message.answer('🗓 Планирование', reply_markup=inline([[('📆 Календарь', 'cal:open'),('📥 Входящие','inbox:open')],
+        [('📊 Статистика','stats:week'),('🌱 Привычки','habit:list:0:0')]]))
 
 
 async def show_month(message: Message, user_id: int, service: TaskService, year: int, month: int, *, edit=True):

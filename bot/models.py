@@ -15,6 +15,10 @@ class User:
     summary_enabled: bool = False
     summary_time: str = '08:00'
     summary_empty: bool = False
+    quiet_enabled: bool = False
+    quiet_start: str = '23:00'
+    quiet_end: str = '08:00'
+    quiet_exempt_high: bool = False
 
 
 @dataclass(frozen=True, slots=True)
