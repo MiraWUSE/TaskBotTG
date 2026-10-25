@@ -95,3 +95,5 @@ async def test_v1_to_current_preserves_and_assigns_defaults(tmp_path):
             row = await (await connection.execute('SELECT title,priority FROM tasks')).fetchone()
             assert row[:] == ('Сохранить', 'medium')
             assert (await (await connection.execute('SELECT task_sort FROM users')).fetchone())[0] == 'time'
+            assert (await (await connection.execute('SELECT category FROM tasks')).fetchone())[0] == 'other'
+            assert (await (await connection.execute('SELECT COUNT(*) FROM categories')).fetchone())[0] == 5

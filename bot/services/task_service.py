@@ -43,7 +43,7 @@ def _datetime(value: int) -> datetime:
 
 
 def _user(row: aiosqlite.Row) -> User:
-    return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]), row['task_sort'])
+    return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]), row['task_sort'], row['task_category'])
 
 
 def _task(row: aiosqlite.Row) -> Task:
@@ -54,6 +54,7 @@ def _task(row: aiosqlite.Row) -> Task:
         created_at=_datetime(row["created_at"]), updated_at=_datetime(row["updated_at"]),
         generation=row["generation"], revision=row["revision"],
         priority=row['priority'],
+        category=row['category'], category_label=row['category_label'],
     )
 
 
@@ -71,7 +72,8 @@ def _delivery(row: aiosqlite.Row) -> Delivery:
 # актуальным и отображается в списке; будущий экземпляр серии хранится отдельно.
 TASK_VIEW = f"""
 WITH task_view AS (
-    SELECT t.*, CASE WHEN t.repeat='none' THEN COALESCE((
+    SELECT t.*, (SELECT name FROM categories c WHERE c.id=t.category) AS category_label,
+    CASE WHEN t.repeat='none' THEN COALESCE((
         SELECT MIN(d.due_at) FROM deliveries d
         WHERE d.task_id = t.id AND d.generation = t.generation
           AND d.status IN {LIVE_DELIVERIES}
@@ -84,7 +86,7 @@ WITH task_view AS (
 """
 TASK_TODAY_VIEW = f"""
 WITH task_candidates AS (
-    SELECT t.*, (
+    SELECT t.*, (SELECT name FROM categories c WHERE c.id=t.category) AS category_label, (
         SELECT MIN(d.due_at) FROM deliveries d
         WHERE d.task_id=t.id AND d.generation=t.generation
           AND d.status IN {LIVE_DELIVERIES} AND d.due_at>=? AND d.due_at<?
@@ -176,7 +178,7 @@ class TaskService:
             return _user(await _one(connection, "SELECT * FROM users WHERE id=?", (user_id,)))
 
     async def create_task(self, user_id: int, title: str, remind_at: datetime,
-                          repeat: str = "none", *, priority: str = 'medium') -> Task:
+                          repeat: str = "none", *, priority: str = 'medium', category: str = 'other') -> Task:
         title = self._title(title)
         stamp = self._future(remind_at)
         if repeat not in REPEATS:
@@ -190,15 +192,16 @@ class TaskService:
                 raise ValidationError("Для повтора по будням выберите дату с понедельника по пятницу.")
         now = self._timestamp()
         async with self.database.transaction() as connection:
+            await self._category(connection, user_id, category)
             cursor = await connection.execute(
-                """INSERT INTO tasks(user_id,title,remind_at,repeat,timezone,created_at,updated_at,priority)
-                   VALUES (?,?,?,?,?,?,?,?)""", (user_id, title, stamp, repeat, user.timezone, now, now, priority),
+                """INSERT INTO tasks(user_id,title,remind_at,repeat,timezone,created_at,updated_at,priority,category)
+                   VALUES (?,?,?,?,?,?,?,?,?)""", (user_id, title, stamp, repeat, user.timezone, now, now, priority, category),
             )
             return _task(await self._owned_task(connection, user_id, cursor.lastrowid))
 
     @staticmethod
     async def _owned_task(connection, user_id: int, task_id: int):
-        row = await _one(connection, "SELECT * FROM tasks WHERE id=? AND user_id=? AND status='active'",
+        row = await _one(connection, "SELECT t.*, (SELECT name FROM categories c WHERE c.id=t.category) AS category_label FROM tasks t WHERE id=? AND user_id=? AND status='active'",
                          (task_id, user_id))
         if row is None:
             raise TaskNotFound()
@@ -214,7 +217,8 @@ class TaskService:
         return _task(row)
 
     async def list_tasks(self, user_id: int, *, today: bool = False, page: int = 0,
-                         page_size: int = 6, sort_by: str | None = None) -> tuple[list[Task], int]:
+                         page_size: int = 6, sort_by: str | None = None,
+                         category: str | None = None) -> tuple[list[Task], int]:
         if page < 0 or not 1 <= page_size <= 20:
             raise ValidationError("Неверная страница списка.")
         user = await self.get_user(user_id)
@@ -232,6 +236,11 @@ class TaskService:
             values = [start_stamp, end_stamp, start_stamp, end_stamp, user_id]
             where += " AND display_at IS NOT NULL"
         async with self.database.read() as connection:
+            category = user.task_category if category is None else category
+            if category != 'all':
+                await self._category(connection, user_id, category)
+                where += ' AND category=?'
+                values.append(category)
             total = (await _one(connection, view + f"SELECT COUNT(*) FROM task_view WHERE {where}", values))[0]
             rows = await _all(connection, view + f"SELECT * FROM task_view WHERE {where} "
                               f"ORDER BY {order} LIMIT ? OFFSET ?", (*values, page_size, page * page_size))
@@ -252,6 +261,35 @@ class TaskService:
             await self._owned_task(connection, user_id, task_id)
             await connection.execute('UPDATE tasks SET priority=?,revision=revision+1,updated_at=? WHERE id=? AND user_id=?',
                                      (priority, self._timestamp(), task_id, user_id))
+        return await self.get_task(user_id, task_id)
+
+    @staticmethod
+    async def _category(connection, user_id: int, category: str):
+        row = await _one(connection, 'SELECT * FROM categories WHERE id=? AND (owner_id IS NULL OR owner_id=?)',
+                         (category, user_id))
+        if row is None:
+            raise ValidationError('Категория недоступна.')
+        return row
+
+    async def list_categories(self, user_id: int) -> list[tuple[str, str]]:
+        async with self.database.read() as connection:
+            rows = await _all(connection, 'SELECT id,name FROM categories WHERE owner_id IS NULL OR owner_id=? ORDER BY rowid', (user_id,))
+        return [(row['id'], row['name']) for row in rows]
+
+    async def set_category_filter(self, user_id: int, category: str) -> None:
+        await self.get_user(user_id)
+        async with self.database.transaction() as connection:
+            if category != 'all':
+                await self._category(connection, user_id, category)
+            await connection.execute('UPDATE users SET task_category=?,updated_at=? WHERE id=?',
+                                     (category, self._timestamp(), user_id))
+
+    async def set_category(self, user_id: int, task_id: int, category: str) -> Task:
+        async with self.task_lock(task_id), self.database.transaction() as connection:
+            await self._owned_task(connection, user_id, task_id)
+            await self._category(connection, user_id, category)
+            await connection.execute('UPDATE tasks SET category=?,revision=revision+1,updated_at=? WHERE id=? AND user_id=?',
+                                     (category, self._timestamp(), task_id, user_id))
         return await self.get_task(user_id, task_id)
 
     async def rename_task(self, user_id: int, task_id: int, title: str) -> Task:

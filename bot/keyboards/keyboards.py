@@ -83,6 +83,7 @@ def tasks_keyboard(tasks: list, total: int, page: int, today: bool, page_size: i
     rows.append([("🔄 Обновить", f"list:{kind}:{page}")])
     rows.append([('⏰ По времени' if sort_by == 'priority' else '🚦 По приоритету',
                   f"sort:{'time' if sort_by == 'priority' else 'priority'}:{kind}")])
+    rows.append([('🗂 Категории', f'filters:{kind}')])
     return inline(rows)
 
 
@@ -92,6 +93,7 @@ def task_keyboard(task_id: int, repeat: str, today: bool, page: int, version: st
         [("✏️ Изменить название", f"task:rename:{suffix}")],
         [("📆 Изменить дату и время", f"task:time:{suffix}")],
         [('🚦 Приоритет', f'task:priority:{suffix}')],
+        [('🗂 Категория', f'task:category:{suffix}')],
         [("✅ Выполнено", f"task:done:{suffix}")],
     ]
     if repeat == "none":

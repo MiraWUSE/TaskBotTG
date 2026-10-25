@@ -70,6 +70,13 @@ MIGRATIONS = (
         "ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('high','medium','low'))",
         "ALTER TABLE users ADD COLUMN task_sort TEXT NOT NULL DEFAULT 'time' CHECK(task_sort IN ('time','priority'))",
     )),
+    Migration(3, (
+        'CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, owner_id INTEGER REFERENCES users(id))',
+        "INSERT INTO categories VALUES ('study','🎓 Учёба',NULL),('work','💼 Работа',NULL),('personal','🏠 Личное',NULL),('shopping','🛒 Покупки',NULL),('other','📌 Другое',NULL)",
+        "ALTER TABLE tasks ADD COLUMN category TEXT NOT NULL DEFAULT 'other'",
+        "ALTER TABLE users ADD COLUMN task_category TEXT NOT NULL DEFAULT 'all'",
+        'CREATE INDEX tasks_category ON tasks(user_id, category, status)',
+    )),
 )
 
 

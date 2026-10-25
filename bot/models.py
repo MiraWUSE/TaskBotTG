@@ -11,6 +11,7 @@ class User:
     timezone: str
     blocked: bool = False
     task_sort: str = 'time'
+    task_category: str = 'all'
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,8 @@ class Task:
     generation: int
     revision: int = 0
     priority: str = 'medium'
+    category: str = 'other'
+    category_label: str = '📌 Другое'
 
 
 @dataclass(frozen=True, slots=True)

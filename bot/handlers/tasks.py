@@ -77,6 +77,7 @@ def _task_text(task, timezone: str, now: datetime) -> str:
     text = (
         f"{priority_icon(task.priority)} <b>{escape(task.title)}</b>\n\n"
         f"🚦 {PRIORITIES[task.priority]}\n"
+        f"🗂 {escape(task.category_label)}\n"
         f"📅 {format_datetime(task.remind_at, timezone)}\n"
         f"🌍 {escape(timezone)}\n"
         f"🔁 {repeat}\n"
@@ -360,6 +361,7 @@ async def _show_list(
         page = (total - 1) // PAGE_SIZE
         tasks, total = await service.list_tasks(user_id, today=today, page=page, page_size=PAGE_SIZE)
     user = await service.get_user(user_id)
+    filter_label = dict(await service.list_categories(user_id)).get(user.task_category, 'Все категории')
     if not tasks:
         text = "🎉 На сегодня задач нет!" if today else "📋 Задач пока нет. Создай первую через /new."
     else:
@@ -371,6 +373,7 @@ async def _show_list(
                 f"📅 {format_datetime(task.remind_at, user.timezone)} · {_status(task, service.now())}"
             )
         text = "\n".join(lines)
+    text += f'\n\n🗂 {escape(filter_label)}'
     keyboard = tasks_keyboard(tasks, total, page, today, PAGE_SIZE, user.task_sort)
     if edit:
         await edit_message(message, text, keyboard)
@@ -405,7 +408,7 @@ async def list_callback(callback: CallbackQuery, state: FSMContext, service: Tas
 async def task_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
     parts = (callback.data or "").split(":")
     try:
-        if len(parts) not in {5, 6} or parts[1] not in {"view", "rename", "time", "priority", "done", "delete", "stop"} or parts[3] not in {"0", "1"}:
+        if len(parts) not in {5, 6} or parts[1] not in {"view", "rename", "time", "priority", "category", "done", "delete", "stop"} or parts[3] not in {"0", "1"}:
             raise ValueError
         task_id = _number(parts[2])
         page = _number(parts[4], zero=True)
@@ -420,6 +423,13 @@ async def task_callback(callback: CallbackQuery, state: FSMContext, service: Tas
     action = parts[1]
     today = parts[3] == "1"
     user = await service.get_user(callback.from_user.id)
+    if action == 'category':
+        await answer_callback(callback)
+        categories = await service.list_categories(callback.from_user.id)
+        await edit_message(callback.message, '🗂 Выбери категорию задачи', inline(
+            [[(label, f'category:{task.id}:{_task_version(task)}:{key}')] for key, label in categories]
+            + [[('◀️ Назад', f'task:view:{task.id}:{int(today)}:{page}')]]))
+        return
     if action == 'priority':
         await answer_callback(callback)
         await edit_message(callback.message, '🚦 Выбери приоритет задачи', inline(
@@ -581,6 +591,47 @@ async def sort_callback(callback: CallbackQuery, state: FSMContext, service: Tas
     await _show_list(callback.message, callback.from_user.id, state, service, today=parts[2] == '1', edit=True)
 
 
+async def category_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
+    parts = (callback.data or '').split(':')
+    try:
+        if len(parts) != 4:
+            raise ValueError
+        task = await service.get_task(callback.from_user.id, _number(parts[1]))
+        if parts[2] != _task_version(task):
+            raise ValueError
+        task = await service.set_category(callback.from_user.id, task.id, parts[3])
+    except (ValueError, TaskNotFound):
+        await _stale(callback)
+        return
+    await state.clear()
+    await answer_callback(callback, 'Категория изменена')
+    user = await service.get_user(callback.from_user.id)
+    await edit_message(callback.message, _task_text(task, user.timezone, service.now()),
+                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task)))
+
+
+async def filter_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
+    parts = (callback.data or '').split(':')
+    try:
+        if parts[0] == 'filters':
+            if len(parts) != 2 or parts[1] not in {'0', '1'}:
+                raise ValueError
+            categories = [('all', '📋 Все категории')] + await service.list_categories(callback.from_user.id)
+            await answer_callback(callback)
+            await edit_message(callback.message, '🗂 Какие задачи показать?', inline(
+                [[(name, f'filter:{key}:{parts[1]}')] for key, name in categories]
+                + [[('◀️ Назад', f'list:{parts[1]}:0')]]))
+            return
+        if len(parts) != 3 or parts[2] not in {'0', '1'}:
+            raise ValueError
+        await service.set_category_filter(callback.from_user.id, parts[1])
+    except ValueError:
+        await _stale(callback)
+        return
+    await answer_callback(callback)
+    await _show_list(callback.message, callback.from_user.id, state, service, today=parts[2] == '1', edit=True)
+
+
 def register_navigation(router: Router) -> None:
     router.message.register(start_creation, Command("new"))
     router.message.register(start_creation, F.text == NEW_TASK)
@@ -591,6 +642,8 @@ def register_navigation(router: Router) -> None:
 
 
 def register_handlers(router: Router) -> None:
+    router.callback_query.register(category_callback, F.data.startswith('category:'))
+    router.callback_query.register(filter_callback, F.data.startswith('filters:') | F.data.startswith('filter:'))
     router.callback_query.register(priority_callback, F.data.startswith('priority:'))
     router.callback_query.register(sort_callback, F.data.startswith('sort:'))
     router.callback_query.register(choose_quick_time, F.data.startswith("when:"))

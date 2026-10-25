@@ -495,3 +495,19 @@ async def test_priority_ui_and_sort(ui):
     await ui.text('/tasks')
     await ui.click(ui.button('sort:priority:'))
     assert (await ui.service.get_user(HUMAN.id)).task_sort == 'priority'
+
+
+async def test_category_ui_and_filter(ui):
+    await ui.text('Через 30 минут задача')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('task:category:'))
+    buttons = [b.callback_data for row in ui.session.latest.reply_markup.inline_keyboard for b in row]
+    await ui.click(next(x for x in buttons if x.endswith(':study')))
+    assert '🎓 Учёба' in ui.session.latest.text
+    await ui.text('/tasks')
+    await ui.click(ui.button('filters:'))
+    await ui.click(ui.button('filter:work:'))
+    assert 'Задач пока нет' in ui.session.latest.text
+    await ui.click(ui.button('filters:'))
+    await ui.click(ui.button('filter:all:'))
+    assert 'Задача' in ui.session.latest.text
