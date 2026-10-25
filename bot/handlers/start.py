@@ -8,6 +8,7 @@ from aiogram.types import Message
 from bot.keyboards.keyboards import HELP, MAIN_MENU, main_menu
 
 HELP_TEXT = (
+    "/stats — статистика, /habits — привычки. Тихие часы включаются в настройках.\n\n"
     "Планирование: /calendar — календарь, /inbox — задачи без даты.\n"
     "В карточке есть подзадачи и прогресс; в настройках — утренняя сводка.\n\n"
     "Быстро: отправь «Завтра в 15:00 сходить в магазин» и подтверди сохранение.\n\n"

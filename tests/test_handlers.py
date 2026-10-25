@@ -663,3 +663,16 @@ async def test_quiet_hours_ui_settings_and_range_validation(ui):
     await ui.text('22:30–7:15')
     user=await ui.service.get_user(HUMAN.id)
     assert (user.quiet_start,user.quiet_end)==('22:30','07:15')
+
+
+async def test_habit_history_exits_an_active_creation_dialog(ui):
+    await ui.text('/habits')
+    await ui.click(ui.button('habit:new'))
+    await ui.text('Читать')
+    source=ui.session.latest
+    history=ui.button('habit:history:')
+    await ui.text('/habits')
+    await ui.click(ui.button('habit:new'))
+    assert await ui.state() is not None
+    await ui.click(history,message=source)
+    assert await ui.state() is None

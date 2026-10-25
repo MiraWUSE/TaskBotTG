@@ -92,6 +92,7 @@ async def habit_callback(callback: CallbackQuery,state: FSMContext,service: Task
         action=parts[1]
         if len(parts)==3 and action in {'view','history'}:
             if action=='history':
+                await state.clear()
                 text=f'📜 <b>{escape(item.title)}</b>\nПоследние отметки (до 30):\n'+('\n'.join(item.history) or 'Пока нет отметок.')
                 await answer_callback(callback)
                 await edit_message(callback.message,text,inline([[('◀️ Назад',f'habit:view:{item.id}')]]))
@@ -113,6 +114,7 @@ async def habit_callback(callback: CallbackQuery,state: FSMContext,service: Task
                 await callback.message.answer('✏️ Новое название привычки. Отмена: /cancel')
                 return
             elif action=='archive':
+                await state.clear()
                 await answer_callback(callback)
                 await edit_message(callback.message,'Убрать привычку в архив? История сохранится.',inline([
                     [('Да, в архив',f'habit:confirm:{item.id}:{item.revision}')],[('Отмена',f'habit:view:{item.id}')]]))

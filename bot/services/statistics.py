@@ -35,7 +35,8 @@ class StatisticsService:
                   for key,value in beginnings.items()}
         stamp = int(now.timestamp())
         async with self.tasks.database.read() as connection:
-            completed = await _all(connection,'SELECT * FROM task_completions WHERE user_id=?',(user_id,))
+            completed = await _all(connection,'''SELECT * FROM task_completions WHERE user_id=? AND completed_at<=?
+                AND (completed_at>=? OR scheduled_at>=?)''',(user_id,stamp,min(starts.values()),starts[period]))
             overdue = await _all(connection,'''SELECT t.id AS task_id,t.generation,t.remind_at AS scheduled_at
                 FROM tasks t WHERE t.user_id=? AND t.status='active' AND t.remind_at<=?
                 AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.task_id=t.id AND d.generation=t.generation
