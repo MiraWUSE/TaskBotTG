@@ -163,6 +163,20 @@ MIGRATIONS = (
             FROM tasks WHERE repeat='none' AND status='completed' ''',
         'CREATE INDEX completions_owner_time ON task_completions(user_id,completed_at)',
     )),
+    Migration(9, (
+        '''CREATE TABLE habits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL REFERENCES users(id),
+            title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),
+            active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),revision INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+        )''',
+        '''CREATE TABLE habit_checks (
+            habit_id INTEGER NOT NULL REFERENCES habits(id),local_day TEXT NOT NULL,
+            timezone TEXT NOT NULL,checked_at INTEGER NOT NULL,done INTEGER NOT NULL DEFAULT 1 CHECK(done IN (0,1)),
+            PRIMARY KEY(habit_id,local_day)
+        )''',
+        'CREATE INDEX habits_owner ON habits(user_id,active,id)',
+    )),
 )
 
 

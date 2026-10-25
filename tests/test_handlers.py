@@ -631,3 +631,21 @@ async def test_statistics_ui_is_personal_and_period_switches(ui):
     assert 'за месяц' in ui.session.latest.text
     await ui.click('stats:invalid')
     assert await ui.state() is None
+
+
+async def test_habits_ui_check_undo_history_and_archive(ui):
+    await ui.text('/habits')
+    await ui.click(ui.button('habit:new'))
+    await ui.text('Читать ежедневно')
+    await ui.click(ui.button('habit:done:'))
+    assert 'Сегодня выполнено' in ui.session.latest.text
+    await ui.click(ui.button('habit:history:'))
+    assert '2026-10-23' in ui.session.latest.text
+    await ui.click(ui.button('habit:view:'))
+    await ui.click(ui.button('habit:undo:'))
+    await ui.click(ui.button('habit:archive:'))
+    await ui.click(ui.button('habit:confirm:'))
+    assert 'В архиве' in ui.session.latest.text
+    await ui.click(ui.button('habit:restore:'))
+    assert ui.button('habit:done:')
+    assert (await ui.service.list_tasks(HUMAN.id))[1]==0
