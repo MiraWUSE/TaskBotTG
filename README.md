@@ -367,3 +367,5 @@ TaskBot/
 Справочные материалы: [Telegram BotFather](https://core.telegram.org/bots/features#botfather), [aiogram](https://docs.aiogram.dev/), [SQLite Backup API в Python](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup), [Docker Compose](https://docs.docker.com/compose/).
 
 План будущих версий: [ROADMAP.md](ROADMAP.md). История текущего этапа разработки: [WORKLOG.md](WORKLOG.md).
+
+Итоги improvements v1, коммиты, проверки и ограничения: [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md).
