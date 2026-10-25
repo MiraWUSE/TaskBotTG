@@ -3,7 +3,7 @@
 from aiogram import Router
 from aiogram.types import CallbackQuery
 
-from bot.handlers import settings, start, tasks
+from bot.handlers import quick, settings, start, tasks
 from bot.handlers.middleware import UserMiddleware, answer_callback
 
 
@@ -22,6 +22,7 @@ def create_router() -> Router:
     settings.register_navigation(router)
     tasks.register_handlers(router)
     settings.register_handlers(router)
+    quick.register_handlers(router)
     router.message.register(start.unknown_message)
     router.callback_query.register(unknown_callback)
     return router

@@ -153,7 +153,10 @@ async def _choose_datetime(
     user = await service.get_user(user_id)
     if moment <= service.now():
         raise ValueError("Это время уже прошло. Выбери будущие дату и время.")
-    if data.get("mode") == "create":
+    if data.get("mode") == "quick":
+        from bot.handlers.quick import confirm_draft
+        await confirm_draft(message, state, service, user_id, data['title'], moment)
+    elif data.get("mode") == "create":
         await state.update_data(remind_at=moment.isoformat())
         await state.set_state(TaskFlow.repeat)
         await message.answer(
