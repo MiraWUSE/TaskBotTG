@@ -263,6 +263,7 @@ docker compose cp bot:/app/data/backups/bot-2026-10-23.sqlite3 ./backups/bot-202
 ```bash
 python -m pytest -q
 python -m compileall -q bot tests
+python -m ruff check .
 ```
 
 Здесь `python` должен быть интерпретатором виртуального окружения; на Windows можно указать `.\.venv\Scripts\python.exe`, на Linux — `.venv/bin/python`.
@@ -279,6 +280,8 @@ python -m compileall -q bot tests
 6. Ежедневный повтор: выполнение одного уведомления сохраняет серию, остановка серии прекращает будущие уведомления.
 
 ## 11. Структура
+
+GitHub Actions (`.github/workflows/checks.yml`) проверяет push и pull request на Python 3.11–3.14: зависимости, синтаксис, критические ошибки Ruff, миграции и полный pytest с предупреждениями как ошибками. Секреты и доступ к серверу не требуются. До публикации ветки workflow можно проверить теми же командами локально; результат GitHub CI появится после отправки изменений.
 
 `bot/main.py` загружает конфигурацию, открывает SQLite, подключает обработчики aiogram и запускает long polling вместе с фоновым обработчиком напоминаний. `handlers/` принимает команды и нажатия, ведёт пошаговый диалог; `keyboards/` формирует меню. `task_service.py` проверяет владельца и меняет задачи в коротких транзакциях `database/db.py`. `datetime_utils.py` разбирает даты и рассчитывает повторы с учётом часовых поясов.
 
