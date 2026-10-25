@@ -124,12 +124,22 @@ async def start_creation(message: Message, state: FSMContext) -> None:
     )
 
 
-async def receive_title(message: Message, state: FSMContext) -> None:
+async def receive_title(message: Message, state: FSMContext, service: TaskService) -> None:
     try:
         title = _title(message.text)
     except ValueError:
         await message.answer("Напиши непустое название задачи — до 200 символов. Отмена: /cancel")
         return
+    data = await state.get_data()
+    if data.get('calendar_day'):
+        day = date.fromisoformat(data['calendar_day'])
+        user = await service.get_user(message.from_user.id)
+        if day >= service.now().astimezone(ZoneInfo(user.timezone)).date():
+            await state.clear()
+            await state.update_data(mode='create',title=title,nonce=uuid4().hex[:10],day=day.isoformat())
+            await state.set_state(TaskFlow.time)
+            await message.answer(f'📆 {day:%d.%m.%Y}\nВо сколько напомнить? Например 8:00. Отмена: /cancel')
+            return
     await _start_schedule(message, state, mode="create", title=title)
 
 

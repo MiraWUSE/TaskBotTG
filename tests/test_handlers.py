@@ -559,3 +559,29 @@ async def test_summary_settings_ui(ui):
     await ui.text('25:00')
     await ui.text('9:15')
     assert (await ui.service.get_user(HUMAN.id)).summary_time == '09:15'
+
+
+async def test_calendar_ui_create_day_card_and_month_navigation(ui):
+    await ui.text('/calendar')
+    await ui.click('cal:month:2026-11')
+    assert 'Ноябрь' in ui.session.latest.text
+    await ui.click('cal:day:2026-11-25:0')
+    await ui.click(ui.button('cal:new:'))
+    await ui.text('Приём')
+    assert await ui.state() == TaskFlow.time.state
+    await ui.text('8:00')
+    await ui.click(ui.button('repeat:'))
+    task = (await ui.service.list_tasks(HUMAN.id))[0][0]
+    assert task.remind_at == datetime(2026,11,25,5,tzinfo=UTC)
+    await ui.text('/calendar')
+    await ui.click('cal:day:2026-11-25:0')
+    await ui.click(ui.button('cal:task:'))
+    assert 'Приём' in ui.session.latest.text
+    assert ui.button('cal:day:')
+
+
+async def test_calendar_forged_and_past_creation_rejected(ui):
+    await ui.text('/calendar')
+    for callback in ('cal:new:2026-10-22','cal:month:bad','cal:day:2026-10-23:-1','cal:task:999:2026-10-23'):
+        await ui.click(callback)
+    assert await ui.state() is None

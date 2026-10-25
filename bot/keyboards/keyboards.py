@@ -14,6 +14,7 @@ TODAY = "📅 Задачи на сегодня"
 SETTINGS = "⚙️ Настройки"
 HELP = "❓ Помощь"
 MAIN_MENU = "🏠 Главное меню"
+PLANNING = '🗓 Планирование'
 
 REPEAT_LABELS = {
     "none": "Однократно",
@@ -38,6 +39,7 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=NEW_TASK)],
             [KeyboardButton(text=MY_TASKS), KeyboardButton(text=TODAY)],
             [KeyboardButton(text=SETTINGS), KeyboardButton(text=HELP)],
+            [KeyboardButton(text=PLANNING)],
             [KeyboardButton(text=MAIN_MENU)],
         ],
         resize_keyboard=True,

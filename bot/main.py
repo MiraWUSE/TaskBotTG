@@ -23,6 +23,7 @@ COMMANDS = [
     BotCommand(command="new", description="Создать задачу"),
     BotCommand(command="tasks", description="Мои задачи"),
     BotCommand(command="today", description="Задачи на сегодня"),
+    BotCommand(command="calendar", description="Календарь задач"),
     BotCommand(command="settings", description="Часовой пояс"),
     BotCommand(command="help", description="Справка"),
     BotCommand(command="cancel", description="Отменить текущее действие"),
