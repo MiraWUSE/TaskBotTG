@@ -25,7 +25,7 @@ def test_supported_forms(text, expected, title):
 
 @pytest.mark.parametrize('text', ['через 0 минут дело', 'сегодня в 8 дело', '31.11.2026 в 8 дело',
                                       'завтра в 25:00 дело', 'завтра в 8:99 дело', 'завтра в 8:00', 'через 10 минут',
-                                      'завтра в 8.5 дело', 'завтра в 20 утра дело'])
+                                      'завтра в 8.5 дело', 'завтра в 20 утра дело', 'завтра в 9 утра'])
 def test_invalid_not_saved(text):
     with pytest.raises(ValueError):
         parse_quick_task(text, 'Europe/Moscow', NOW)

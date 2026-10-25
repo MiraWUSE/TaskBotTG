@@ -511,3 +511,40 @@ async def test_category_ui_and_filter(ui):
     await ui.click(ui.button('filters:'))
     await ui.click(ui.button('filter:all:'))
     assert 'Задача' in ui.session.latest.text
+
+
+async def test_advance_ui_multiple_save_clear_and_cancel(ui):
+    await ui.text('Через 2 часа задача')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('task:advance:'))
+    def advance_button(value):
+        return next(b.callback_data for row in ui.session.latest.reply_markup.inline_keyboard for b in row if b.callback_data.endswith(':' + value))
+    await ui.click(advance_button('5'))
+    await ui.click(advance_button('60'))
+    tasks, _ = await ui.service.list_tasks(HUMAN.id)
+    assert tasks[0].advance_offsets == ()
+    await ui.click(advance_button('save'))
+    assert (await ui.service.get_task(HUMAN.id, tasks[0].id)).advance_offsets == (5,60)
+    await ui.click(ui.button('task:advance:'))
+    await ui.click(advance_button('none'))
+    await ui.click(advance_button('cancel'))
+    assert (await ui.service.get_task(HUMAN.id, tasks[0].id)).advance_offsets == (5,60)
+    await ui.click(ui.button('task:advance:'))
+    await ui.click(advance_button('none'))
+    await ui.click(advance_button('save'))
+    assert (await ui.service.get_task(HUMAN.id, tasks[0].id)).advance_offsets == ()
+
+
+async def test_advance_stale_and_foreign_callback(ui):
+    await ui.text('Через 2 часа задача')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('task:advance:'))
+    source = ui.session.latest
+    choice = ui.button('advance:')
+    other = User(id=99, is_bot=False, first_name='Чужой')
+    await ui.click(choice, message=source, user=other)
+    task = (await ui.service.list_tasks(HUMAN.id))[0][0]
+    assert task.advance_offsets == ()
+    await ui.service.rename_task(HUMAN.id, task.id, 'Изменено')
+    await ui.click(choice, message=source)
+    assert (await ui.service.get_task(HUMAN.id, task.id)).advance_offsets == ()

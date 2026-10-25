@@ -51,6 +51,8 @@ def parse_quick_task(text: str, timezone: str, now: datetime) -> QuickTask | Non
             raise ValueError('Дата за пределами допустимого диапазона.') from error
     match = ABSOLUTE.fullmatch(text)
     if match:
+        if match['title'].strip().casefold() in {'утра', 'дня', 'вечера', 'ночи'}:
+            raise ValueError('Добавь название задачи после времени.')
         title = _title(match['title'])
         clock = parse_time(match['clock'])
         period = (match['period'] or '').lower()

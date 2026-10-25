@@ -30,6 +30,7 @@ class Task:
     priority: str = 'medium'
     category: str = 'other'
     category_label: str = '📌 Другое'
+    advance_offsets: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,3 +49,6 @@ class Delivery:
     message_id: int | None
     chat_id: int
     priority: str = 'medium'
+    kind: str = 'main'
+    offset_minutes: int = 0
+    user_timezone: str = 'Europe/Moscow'

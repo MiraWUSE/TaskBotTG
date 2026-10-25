@@ -29,7 +29,7 @@ from bot.keyboards.keyboards import (
     time_keyboard,
 )
 from bot.services.task_service import TaskNotFound, TaskService, ValidationError
-from bot.task_options import PRIORITIES, priority_icon
+from bot.task_options import ADVANCES, PRIORITIES, priority_icon
 from bot.utils.datetime_utils import combine_local, format_datetime, parse_datetime, parse_time, parse_user_date
 
 PAGE_SIZE = 6
@@ -42,6 +42,7 @@ class TaskFlow(StatesGroup):
     time = State()
     repeat = State()
     rename = State()
+    advances = State()
 
 
 def _number(text: str, *, zero: bool = False) -> int:
@@ -85,6 +86,7 @@ def _task_text(task, timezone: str, now: datetime) -> str:
     )
     if task.repeat != "none":
         text += "\n\n«Выполнено» завершает только ближайшее напоминание."
+    text += '\n⏳ Заранее: ' + (', '.join(ADVANCES[x].lower() for x in task.advance_offsets) or 'выключено')
     return text
 
 
@@ -408,7 +410,7 @@ async def list_callback(callback: CallbackQuery, state: FSMContext, service: Tas
 async def task_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
     parts = (callback.data or "").split(":")
     try:
-        if len(parts) not in {5, 6} or parts[1] not in {"view", "rename", "time", "priority", "category", "done", "delete", "stop"} or parts[3] not in {"0", "1"}:
+        if len(parts) not in {5, 6} or parts[1] not in {"view", "rename", "time", "priority", "category", "advance", "done", "delete", "stop"} or parts[3] not in {"0", "1"}:
             raise ValueError
         task_id = _number(parts[2])
         page = _number(parts[4], zero=True)
@@ -423,6 +425,14 @@ async def task_callback(callback: CallbackQuery, state: FSMContext, service: Tas
     action = parts[1]
     today = parts[3] == "1"
     user = await service.get_user(callback.from_user.id)
+    if action == 'advance':
+        await state.clear()
+        await state.set_state(TaskFlow.advances)
+        data = dict(task_id=task.id, version=_task_version(task), offsets=list(task.advance_offsets), nonce=uuid4().hex[:10])
+        await state.update_data(**data)
+        await answer_callback(callback)
+        await edit_message(callback.message, '⏳ Когда напомнить заранее? Можно выбрать несколько интервалов, затем нажать «Сохранить».', advance_keyboard(data))
+        return
     if action == 'category':
         await answer_callback(callback)
         categories = await service.list_categories(callback.from_user.id)
@@ -562,6 +572,57 @@ async def reminder_callback(callback: CallbackQuery, state: FSMContext, service:
         await answer_callback(callback, "Не удалось перенести напоминание. Открой /tasks и выбери другое время.", alert=True)
 
 
+def advance_keyboard(data: dict):
+    nonce = data['nonce']
+    selected = data['offsets']
+    return inline([[(('☑️ ' if minutes in selected else '▫️ ') + label, f'advance:{nonce}:{minutes}')]
+                   for minutes, label in ADVANCES.items()]
+                  + [[('Без предварительного уведомления', f'advance:{nonce}:none')],
+                     [('✅ Сохранить', f'advance:{nonce}:save'), ('❌ Отмена', f'advance:{nonce}:cancel')]])
+
+
+async def advance_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
+    parts = (callback.data or '').split(':')
+    data = await state.get_data()
+    try:
+        if (len(parts) != 3 or await state.get_state() != TaskFlow.advances.state
+                or parts[1] != data.get('nonce') or parts[2] not in {'none', 'save', 'cancel', *map(str, ADVANCES)}):
+            raise ValueError
+        task = await service.get_task(callback.from_user.id, data['task_id'])
+        if _task_version(task) != data['version']:
+            raise ValueError
+    except (ValueError, KeyError, TaskNotFound):
+        await _stale(callback)
+        return
+    action = parts[2]
+    if action not in {'save', 'cancel'}:
+        offsets = set(data['offsets'])
+        if action == 'none':
+            offsets.clear()
+        else:
+            value = int(action)
+            if value in offsets:
+                offsets.remove(value)
+            else:
+                offsets.add(value)
+        data['offsets'] = sorted(offsets)
+        await state.update_data(offsets=data['offsets'])
+        await answer_callback(callback)
+        await edit_message(callback.message, '⏳ Выбери интервалы и нажми «Сохранить».', advance_keyboard(data))
+        return
+    if action == 'save':
+        task = await service.set_advances(callback.from_user.id, task.id, data['offsets'])
+    await state.clear()
+    await answer_callback(callback, 'Сохранено' if action == 'save' else 'Отменено')
+    user = await service.get_user(callback.from_user.id)
+    await edit_message(callback.message, _task_text(task, user.timezone, service.now()),
+                       task_keyboard(task.id, task.repeat, False, 0, _task_version(task)))
+
+
+async def advance_hint(message: Message) -> None:
+    await message.answer('Выбери интервалы кнопками и нажми «Сохранить». Отмена: /cancel')
+
+
 async def priority_callback(callback: CallbackQuery, state: FSMContext, service: TaskService) -> None:
     parts = (callback.data or '').split(':')
     try:
@@ -642,6 +703,7 @@ def register_navigation(router: Router) -> None:
 
 
 def register_handlers(router: Router) -> None:
+    router.callback_query.register(advance_callback, F.data.startswith('advance:'))
     router.callback_query.register(category_callback, F.data.startswith('category:'))
     router.callback_query.register(filter_callback, F.data.startswith('filters:') | F.data.startswith('filter:'))
     router.callback_query.register(priority_callback, F.data.startswith('priority:'))
@@ -657,3 +719,4 @@ def register_handlers(router: Router) -> None:
     router.message.register(receive_time, TaskFlow.time)
     router.message.register(repeat_text_hint, TaskFlow.repeat)
     router.message.register(rename_task, TaskFlow.rename)
+    router.message.register(advance_hint, TaskFlow.advances)

@@ -1,4 +1,5 @@
 import sqlite3
+import asyncio
 
 import pytest
 
@@ -97,3 +98,56 @@ async def test_v1_to_current_preserves_and_assigns_defaults(tmp_path):
             assert (await (await connection.execute('SELECT task_sort FROM users')).fetchone())[0] == 'time'
             assert (await (await connection.execute('SELECT category FROM tasks')).fetchone())[0] == 'other'
             assert (await (await connection.execute('SELECT COUNT(*) FROM categories')).fetchone())[0] == 5
+
+
+@pytest.mark.parametrize('version', [1,2,3])
+async def test_all_released_schemas_upgrade_without_losing_delivery_states(tmp_path, version):
+    path = tmp_path / f'old-v{version}.sqlite3'
+    with sqlite3.connect(path) as connection:
+        for migration in migrations.MIGRATIONS[:version]:
+            for statement in migration.statements:
+                connection.execute(statement)
+        connection.execute(f'PRAGMA user_version={version}')
+        connection.execute("INSERT INTO users(id,chat_id,timezone,blocked,created_at,updated_at) VALUES (11,11,'Asia/Tokyo',1,1,2)")
+        connection.execute("INSERT INTO tasks(id,user_id,title,remind_at,repeat,status,timezone,generation,revision,created_at,updated_at) VALUES (15,11,'Серия',2000000000,'daily','active','Asia/Tokyo',3,7,1,2)")
+        if version >= 2:
+            connection.execute("UPDATE tasks SET priority='high'")
+            connection.execute("UPDATE users SET task_sort='priority'")
+        if version >= 3:
+            connection.execute("UPDATE tasks SET category='work'")
+            connection.execute("UPDATE users SET task_category='work'")
+        for i, status in enumerate(('pending','sending','sent','completed','cancelled'), 21):
+            connection.execute('''INSERT INTO deliveries(id,task_id,generation,scheduled_at,due_at,status,attempts,
+                next_attempt_at,lease_until,claim_token,message_id,sent_at,last_error,created_at,updated_at)
+                VALUES (?,15,3,?,?,?,2,123,456,'lease',789,100,'offline',1,2)''', (i, 1900000000+i, 1900000000+i, status))
+        before = connection.execute('SELECT * FROM deliveries ORDER BY id').fetchall()
+    for _ in range(2):
+        async with Database(path) as database:
+            async with database.read() as connection:
+                after = await (await connection.execute('SELECT * FROM deliveries ORDER BY id')).fetchall()
+                assert [tuple(row)[:15] for row in after] == before
+                assert all(row['kind'] == 'main' and row['offset_minutes'] == 0 for row in after)
+                assert (await (await connection.execute('SELECT COUNT(*) FROM task_advances')).fetchone())[0] == 0
+                assert (await (await connection.execute('SELECT generation,revision FROM tasks')).fetchone())[:] == (3,7)
+                assert (await (await connection.execute('SELECT timezone,blocked FROM users')).fetchone())[:] == ('Asia/Tokyo',1)
+                assert (await (await connection.execute('SELECT priority,category FROM tasks')).fetchone())[:] == ('high' if version >= 2 else 'medium', 'work' if version >= 3 else 'other')
+                assert (await (await connection.execute('SELECT task_sort,task_category FROM users')).fetchone())[:] == ('priority' if version >= 2 else 'time', 'work' if version >= 3 else 'all')
+                assert (await (await connection.execute('PRAGMA quick_check')).fetchone())[0] == 'ok'
+
+
+async def test_cancellation_rolls_back_ddl_and_version(tmp_path, monkeypatch):
+    import aiosqlite
+
+    path = tmp_path / 'cancelled.sqlite3'
+    legacy_database(path)
+    original = aiosqlite.Connection.execute
+    def interrupted(self, sql, *args):
+        if sql.startswith('ALTER TABLE users ADD COLUMN task_sort'):
+            raise asyncio.CancelledError
+        return original(self, sql, *args)
+    monkeypatch.setattr(aiosqlite.Connection, 'execute', interrupted)
+    with pytest.raises(asyncio.CancelledError):
+        await Database(path).connect()
+    with sqlite3.connect(path) as connection:
+        assert connection.execute('PRAGMA user_version').fetchone()[0] == 1
+        assert 'priority' not in [row[1] for row in connection.execute('PRAGMA table_info(tasks)')]

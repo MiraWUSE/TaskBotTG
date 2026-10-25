@@ -77,6 +77,31 @@ MIGRATIONS = (
         "ALTER TABLE users ADD COLUMN task_category TEXT NOT NULL DEFAULT 'all'",
         'CREATE INDEX tasks_category ON tasks(user_id, category, status)',
     )),
+    Migration(4, (
+        'ALTER TABLE tasks ADD COLUMN advance_from INTEGER NOT NULL DEFAULT 0',
+        'CREATE TABLE task_advances (task_id INTEGER NOT NULL REFERENCES tasks(id), minutes INTEGER NOT NULL CHECK(minutes IN (5,15,30,60,1440)), PRIMARY KEY(task_id,minutes))',
+        '''CREATE TABLE deliveries_v4 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL REFERENCES tasks(id), generation INTEGER NOT NULL,
+            scheduled_at INTEGER NOT NULL, due_at INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sending','sent','completed','cancelled')),
+            attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL,
+            lease_until INTEGER, claim_token TEXT, message_id INTEGER, sent_at INTEGER,
+            last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'main' CHECK(kind IN ('main','advance')),
+            offset_minutes INTEGER NOT NULL DEFAULT 0,
+            CHECK((kind='main' AND offset_minutes=0) OR (kind='advance' AND offset_minutes IN (5,15,30,60,1440))),
+            UNIQUE(task_id,generation,scheduled_at,kind,offset_minutes)
+        )''',
+        '''INSERT INTO deliveries_v4(id,task_id,generation,scheduled_at,due_at,status,attempts,
+            next_attempt_at,lease_until,claim_token,message_id,sent_at,last_error,created_at,updated_at)
+            SELECT id,task_id,generation,scheduled_at,due_at,status,attempts,
+            next_attempt_at,lease_until,claim_token,message_id,sent_at,last_error,created_at,updated_at FROM deliveries''',
+        'DROP TABLE deliveries',
+        'ALTER TABLE deliveries_v4 RENAME TO deliveries',
+        'CREATE INDEX deliveries_due ON deliveries(status,next_attempt_at,lease_until)',
+        'CREATE INDEX deliveries_task ON deliveries(task_id,generation,status,due_at)',
+    )),
 )
 
 

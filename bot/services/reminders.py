@@ -2,14 +2,16 @@
 
 import asyncio
 import logging
+import math
 from html import escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
-from bot.keyboards.keyboards import reminder_keyboard
+from bot.keyboards.keyboards import inline, reminder_keyboard
 from bot.services.task_service import TaskService
 from bot.task_options import priority_icon
+from bot.utils.datetime_utils import format_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +43,18 @@ class ReminderWorker:
                 delivery = await self.service.refresh_claim(claimed)
                 if delivery is None:
                     continue
+                if delivery.kind == 'advance':
+                    remaining = max(1, math.ceil((delivery.scheduled_at - self.service.now()).total_seconds() / 60))
+                    text = (f'⏳ <b>Скоро задача!</b>\n\n{priority_icon(delivery.priority)} {escape(delivery.title)}\n'
+                            f'⏰ Начало через {remaining} мин.\n📅 {format_datetime(delivery.scheduled_at, delivery.user_timezone)}')
+                    keyboard = inline([[('📝 Открыть задачу', f'task:view:{delivery.task_id}:0:0')]])
+                else:
+                    text = f"🔔 <b>НАПОМИНАНИЕ!</b>\n\n{priority_icon(delivery.priority)} {escape(delivery.title)}\n\n⏰ Время выполнить задачу!"
+                    keyboard = reminder_keyboard(delivery.id)
                 try:
                     message = await self.bot.send_message(
                         chat_id=delivery.chat_id,
-                        text=f"🔔 <b>НАПОМИНАНИЕ!</b>\n\n{priority_icon(delivery.priority)} {escape(delivery.title)}\n\n⏰ Время выполнить задачу!",
-                        reply_markup=reminder_keyboard(delivery.id), parse_mode="HTML",
+                        text=text, reply_markup=keyboard, parse_mode="HTML",
                     )
                 except asyncio.CancelledError:
                     # При неизвестном исходе API не делаем немедленный повтор:
