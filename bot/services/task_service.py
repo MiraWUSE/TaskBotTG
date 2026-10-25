@@ -43,19 +43,22 @@ def _datetime(value: int) -> datetime:
 
 
 def _user(row: aiosqlite.Row) -> User:
-    return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]), row['task_sort'], row['task_category'])
+    return User(row["id"], row["chat_id"], row["timezone"], bool(row["blocked"]), row['task_sort'], row['task_category'],
+                bool(row['summary_enabled']), row['summary_time'], bool(row['summary_empty']))
 
 
 def _task(row: aiosqlite.Row) -> Task:
     return Task(
         id=row["id"], user_id=row["user_id"], title=row["title"],
-        remind_at=_datetime(row["display_at"] if "display_at" in row.keys() else row["remind_at"]),
+        remind_at=(_datetime(row["display_at"] if "display_at" in row.keys() else row["remind_at"])
+                   if row['remind_at'] is not None else None),
         repeat=row["repeat"], status=row["status"], timezone=row["timezone"],
         created_at=_datetime(row["created_at"]), updated_at=_datetime(row["updated_at"]),
         generation=row["generation"], revision=row["revision"],
         priority=row['priority'],
         category=row['category'], category_label=row['category_label'],
         advance_offsets=tuple(sorted(int(x) for x in (row['advance_offsets'] or '').split(',') if x)),
+        subtask_total=row['subtask_total'], subtask_done=row['subtask_done'],
     )
 
 
@@ -74,9 +77,11 @@ def _delivery(row: aiosqlite.Row) -> Delivery:
 # актуальным и отображается в списке; будущий экземпляр серии хранится отдельно.
 TASK_VIEW = f"""
 WITH task_view AS (
-    SELECT t.*, (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets,
+    SELECT t.*, (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0) AS subtask_total,
+    (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0 AND s.done=1) AS subtask_done,
+    (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets,
     (SELECT name FROM categories c WHERE c.id=t.category) AS category_label,
-    CASE WHEN t.repeat='none' THEN COALESCE((
+    CASE WHEN t.remind_at IS NULL THEN NULL WHEN t.repeat='none' THEN COALESCE((
         SELECT MIN(d.due_at) FROM deliveries d
         WHERE d.task_id = t.id AND d.generation = t.generation
           AND d.kind='main' AND d.status IN {LIVE_DELIVERIES}
@@ -89,7 +94,9 @@ WITH task_view AS (
 """
 TASK_TODAY_VIEW = f"""
 WITH task_candidates AS (
-    SELECT t.*, (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets,
+    SELECT t.*, (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0) AS subtask_total,
+    (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0 AND s.done=1) AS subtask_done,
+    (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets,
     (SELECT name FROM categories c WHERE c.id=t.category) AS category_label, (
         SELECT MIN(d.due_at) FROM deliveries d
         WHERE d.task_id=t.id AND d.generation=t.generation
@@ -172,19 +179,22 @@ class TaskService:
             timezone = validate_timezone(timezone)
         except ValueError as error:
             raise ValidationError(str(error)) from error
-        async with self.database.transaction() as connection:
+        async with self.task_lock(-user_id), self.database.transaction() as connection:
             cursor = await connection.execute(
                 "UPDATE users SET timezone=?, updated_at=? WHERE id=?",
                 (timezone, self._timestamp(), user_id),
             )
             if not cursor.rowcount:
                 raise ValidationError("Сначала отправьте /start.")
+            await connection.execute("UPDATE daily_summaries SET status='skipped',claim_token=NULL,lease_until=NULL WHERE user_id=? AND status IN ('pending','sending')", (user_id,))
             return _user(await _one(connection, "SELECT * FROM users WHERE id=?", (user_id,)))
 
-    async def create_task(self, user_id: int, title: str, remind_at: datetime,
+    async def create_task(self, user_id: int, title: str, remind_at: datetime | None,
                           repeat: str = "none", *, priority: str = 'medium', category: str = 'other') -> Task:
         title = self._title(title)
-        stamp = self._future(remind_at)
+        stamp = self._future(remind_at) if remind_at is not None else None
+        if remind_at is None and repeat != 'none':
+            raise ValidationError('Для повторяющейся задачи сначала назначьте дату.')
         if repeat not in REPEATS:
             raise ValidationError("Выберите допустимый вариант повторения.")
         if priority not in PRIORITIES:
@@ -205,7 +215,7 @@ class TaskService:
 
     @staticmethod
     async def _owned_task(connection, user_id: int, task_id: int):
-        row = await _one(connection, "SELECT t.*, (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets, (SELECT name FROM categories c WHERE c.id=t.category) AS category_label FROM tasks t WHERE id=? AND user_id=? AND status='active'",
+        row = await _one(connection, "SELECT t.*, (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0) AS subtask_total, (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0 AND s.done=1) AS subtask_done, (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets, (SELECT name FROM categories c WHERE c.id=t.category) AS category_label FROM tasks t WHERE id=? AND user_id=? AND status='active'",
                          (task_id, user_id))
         if row is None:
             raise TaskNotFound()
@@ -222,7 +232,7 @@ class TaskService:
 
     async def list_tasks(self, user_id: int, *, today: bool = False, page: int = 0,
                          page_size: int = 6, sort_by: str | None = None,
-                         category: str | None = None) -> tuple[list[Task], int]:
+                         category: str | None = None, inbox: bool = False) -> tuple[list[Task], int]:
         if page < 0 or not 1 <= page_size <= 20:
             raise ValidationError("Неверная страница списка.")
         user = await self.get_user(user_id)
@@ -231,6 +241,7 @@ class TaskService:
             raise ValidationError('Неизвестная сортировка.')
         order = "display_at, id" if sort_by == 'time' else "CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, display_at, id"
         where = "user_id=? AND status='active'"
+        where += ' AND remind_at IS NULL' if inbox else ' AND remind_at IS NOT NULL'
         values: list = [user_id]
         view = TASK_VIEW
         if today:

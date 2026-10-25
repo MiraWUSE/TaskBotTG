@@ -101,7 +101,7 @@ async def test_v1_to_current_preserves_and_assigns_defaults(tmp_path):
             assert (await (await connection.execute('SELECT COUNT(*) FROM categories')).fetchone())[0] == 5
 
 
-@pytest.mark.parametrize('version', [1,2,3])
+@pytest.mark.parametrize('version', [1,2,3,4,5,6])
 async def test_all_released_schemas_upgrade_without_losing_delivery_states(tmp_path, version):
     path = tmp_path / f'old-v{version}.sqlite3'
     with closing(sqlite3.connect(path)) as connection, connection:
@@ -121,7 +121,7 @@ async def test_all_released_schemas_upgrade_without_losing_delivery_states(tmp_p
             connection.execute('''INSERT INTO deliveries(id,task_id,generation,scheduled_at,due_at,status,attempts,
                 next_attempt_at,lease_until,claim_token,message_id,sent_at,last_error,created_at,updated_at)
                 VALUES (?,15,3,?,?,?,2,123,456,'lease',789,100,'offline',1,2)''', (i, 1900000000+i, 1900000000+i, status))
-        before = connection.execute('SELECT * FROM deliveries ORDER BY id').fetchall()
+        before = connection.execute('SELECT id,task_id,generation,scheduled_at,due_at,status,attempts,next_attempt_at,lease_until,claim_token,message_id,sent_at,last_error,created_at,updated_at FROM deliveries ORDER BY id').fetchall()
     for _ in range(2):
         async with Database(path) as database:
             async with database.read() as connection:

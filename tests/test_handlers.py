@@ -548,3 +548,77 @@ async def test_advance_stale_and_foreign_callback(ui):
     await ui.service.rename_task(HUMAN.id, task.id, 'Изменено')
     await ui.click(choice, message=source)
     assert (await ui.service.get_task(HUMAN.id, task.id)).advance_offsets == ()
+
+
+async def test_summary_settings_ui(ui):
+    await ui.text('/settings')
+    await ui.click(ui.button('summary:show'))
+    await ui.click(ui.button('summary:enable'))
+    assert (await ui.service.get_user(HUMAN.id)).summary_enabled
+    await ui.click(ui.button('summary:time'))
+    await ui.text('25:00')
+    await ui.text('9:15')
+    assert (await ui.service.get_user(HUMAN.id)).summary_time == '09:15'
+
+
+async def test_calendar_ui_create_day_card_and_month_navigation(ui):
+    await ui.text('/calendar')
+    await ui.click('cal:month:2026-11')
+    assert 'Ноябрь' in ui.session.latest.text
+    await ui.click('cal:day:2026-11-25:0')
+    await ui.click(ui.button('cal:new:'))
+    await ui.text('Приём')
+    assert await ui.state() == TaskFlow.time.state
+    await ui.text('8:00')
+    await ui.click(ui.button('repeat:'))
+    task = (await ui.service.list_tasks(HUMAN.id))[0][0]
+    assert task.remind_at == datetime(2026,11,25,5,tzinfo=UTC)
+    await ui.text('/calendar')
+    await ui.click('cal:day:2026-11-25:0')
+    await ui.click(ui.button('cal:task:'))
+    assert 'Приём' in ui.session.latest.text
+    assert ui.button('cal:day:')
+
+
+async def test_calendar_forged_and_past_creation_rejected(ui):
+    await ui.text('/calendar')
+    for callback in ('cal:new:2026-10-22','cal:month:bad','cal:day:2026-10-23:-1','cal:task:999:2026-10-23'):
+        await ui.click(callback)
+    assert await ui.state() is None
+
+
+async def test_subtasks_ui_add_mark_rename_confirm_delete(ui):
+    await ui.text('Через 2 часа экзамен')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('sub:list:'))
+    await ui.click(ui.button('sub:add:'))
+    await ui.text('Повторить тему')
+    await ui.click(ui.button('sub:item:'))
+    await ui.click(ui.button('sub:done:'))
+    assert '1 из 1' in ui.session.latest.text
+    await ui.click(ui.button('sub:item:'))
+    await ui.click(ui.button('sub:rename:'))
+    await ui.text('Повторить вторую тему')
+    await ui.click(ui.button('sub:item:'))
+    await ui.click(ui.button('sub:delete:'))
+    assert 'Удалить подзадачу?' in ui.session.latest.text
+    await ui.click(ui.button('sub:confirm:'))
+    assert '0 из 0' in ui.session.latest.text
+    assert (await ui.service.list_tasks(HUMAN.id))[1] == 1
+
+
+async def test_inbox_ui_capture_card_assign_date_and_no_fsm_stealing(ui):
+    await ui.text('/inbox')
+    await ui.click(ui.button('inbox:add'))
+    await ui.text('Изучить Docker')
+    task = (await ui.service.list_tasks(HUMAN.id,inbox=True))[0][0]
+    assert task.remind_at is None and 'Без даты' in ui.session.latest.text
+    await ui.click(ui.button('task:time:'))
+    await ui.text('завтра 8:00')
+    assert (await ui.service.get_task(HUMAN.id,task.id)).remind_at is not None
+    assert (await ui.service.list_tasks(HUMAN.id,inbox=True))[1] == 0
+    await ui.text('/inbox Прочитать книгу')
+    assert (await ui.service.list_tasks(HUMAN.id,inbox=True))[1] == 1
+    await ui.text('/new')
+    await ui.text('Изучить Docker')
+    assert await ui.state() == TaskFlow.when.state

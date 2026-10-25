@@ -12,6 +12,9 @@ class User:
     blocked: bool = False
     task_sort: str = 'time'
     task_category: str = 'all'
+    summary_enabled: bool = False
+    summary_time: str = '08:00'
+    summary_empty: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +22,7 @@ class Task:
     id: int
     user_id: int
     title: str
-    remind_at: datetime
+    remind_at: datetime | None
     repeat: str
     status: str
     timezone: str
@@ -31,6 +34,17 @@ class Task:
     category: str = 'other'
     category_label: str = '📌 Другое'
     advance_offsets: tuple[int, ...] = ()
+    subtask_total: int = 0
+    subtask_done: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class Subtask:
+    id: int
+    task_id: int
+    title: str
+    done: bool
+    revision: int
 
 
 @dataclass(frozen=True, slots=True)

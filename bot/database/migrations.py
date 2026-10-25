@@ -62,6 +62,7 @@ CREATE INDEX IF NOT EXISTS deliveries_task ON deliveries(task_id, generation, st
 class Migration:
     version: int
     statements: tuple[str, ...]
+    rebuild_tables: bool = False
 
 
 MIGRATIONS = (
@@ -102,6 +103,52 @@ MIGRATIONS = (
         'CREATE INDEX deliveries_due ON deliveries(status,next_attempt_at,lease_until)',
         'CREATE INDEX deliveries_task ON deliveries(task_id,generation,status,due_at)',
     )),
+    Migration(5, (
+        'ALTER TABLE users ADD COLUMN summary_enabled INTEGER NOT NULL DEFAULT 0 CHECK(summary_enabled IN (0,1))',
+        "ALTER TABLE users ADD COLUMN summary_time TEXT NOT NULL DEFAULT '08:00'",
+        'ALTER TABLE users ADD COLUMN summary_empty INTEGER NOT NULL DEFAULT 0 CHECK(summary_empty IN (0,1))',
+        'ALTER TABLE users ADD COLUMN summary_from INTEGER NOT NULL DEFAULT 0',
+        '''CREATE TABLE daily_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id),
+            local_day TEXT NOT NULL, scheduled_at INTEGER NOT NULL, text TEXT NOT NULL, timezone TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending','sending','sent','skipped')),
+            attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL,
+            lease_until INTEGER, claim_token TEXT, message_id INTEGER, sent_at INTEGER,
+            UNIQUE(user_id,local_day)
+        )''',
+    )),
+    Migration(6, (
+        '''CREATE TABLE subtasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id),
+            title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),
+            done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1)),
+            deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1)),
+            revision INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        )''',
+        'CREATE INDEX subtasks_parent ON subtasks(task_id,deleted,id)',
+    )),
+    Migration(7, (
+        '''CREATE TABLE tasks_v7 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id),
+            title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200), remind_at INTEGER,
+            repeat TEXT NOT NULL CHECK(repeat IN ('none','daily','weekdays','weekly')),
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','deleted')),
+            timezone TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('high','medium','low')),
+            category TEXT NOT NULL DEFAULT 'other', advance_from INTEGER NOT NULL DEFAULT 0,
+            CHECK(remind_at IS NOT NULL OR repeat='none')
+        )''',
+        '''INSERT INTO tasks_v7(id,user_id,title,remind_at,repeat,status,timezone,generation,revision,
+            created_at,updated_at,priority,category,advance_from)
+            SELECT id,user_id,title,remind_at,repeat,status,timezone,generation,revision,
+            created_at,updated_at,priority,category,advance_from FROM tasks''',
+        'DROP TABLE tasks',
+        'ALTER TABLE tasks_v7 RENAME TO tasks',
+        'CREATE INDEX tasks_owner_time ON tasks(user_id,status,remind_at)',
+        'CREATE INDEX tasks_due ON tasks(status,remind_at)',
+        'CREATE INDEX tasks_category ON tasks(user_id,category,status)',
+    ), rebuild_tables=True),
 )
 
 
@@ -131,6 +178,12 @@ async def migrate(connection, path: str) -> None:
         # Backup uses a separate connection before the write transaction.
         # Failure aborts startup; no schema changes have happened yet.
         await asyncio.to_thread(backup_database, source, output)
+    # Rebuilding a referenced table requires disabling FK enforcement before
+    # BEGIN. This startup connection is not yet available to application code;
+    # foreign_key_check still validates all links before committing.
+    rebuild = any(m.version > current and m.rebuild_tables for m in MIGRATIONS)
+    if rebuild:
+        await connection.execute('PRAGMA foreign_keys = OFF')
     await connection.execute("BEGIN IMMEDIATE")
     try:
         # Another connection may have completed the migration while we waited.
@@ -149,3 +202,6 @@ async def migrate(connection, path: str) -> None:
     except BaseException:
         await connection.rollback()
         raise
+    finally:
+        if rebuild:
+            await connection.execute('PRAGMA foreign_keys = ON')

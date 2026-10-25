@@ -10,6 +10,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
 from bot.keyboards.keyboards import inline, reminder_keyboard
 from bot.services.task_service import TaskService
+from bot.services.summaries import SummaryService
 from bot.task_options import priority_icon
 from bot.utils.datetime_utils import format_datetime
 
@@ -76,6 +77,7 @@ class ReminderWorker:
                     logger.info("Напоминание %s доставлено", delivery.id)
                 else:
                     logger.error("Не удалось подтвердить захват доставки %s", delivery.id)
+        sent += await SummaryService(self.service).send_due(self.bot, lease_seconds=self.lease_seconds, limit=self.batch_size)
         return sent
 
     async def run(self, stop: asyncio.Event) -> None:

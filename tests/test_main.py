@@ -6,7 +6,7 @@ from bot.main import COMMANDS, SecretFormatter
 
 
 def test_registered_commands():
-    assert [command.command for command in COMMANDS] == ["start", "new", "tasks", "today", "settings", "help", "cancel"]
+    assert [command.command for command in COMMANDS] == ["start", "new", "tasks", "today", "calendar", "inbox", "settings", "help", "cancel"]
 
 
 def test_log_formatter_redacts_token_even_in_traceback():
@@ -73,7 +73,7 @@ async def test_run_cancellation_stops_polling_and_worker_before_db_close(tmp_pat
             events.append("webhook deleted")
 
         async def set_my_commands(self, commands, **kwargs):
-            assert len(commands) == 7
+            assert len(commands) == 9
             events.append("commands registered")
 
     class Worker:
