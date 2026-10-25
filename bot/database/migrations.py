@@ -116,6 +116,16 @@ MIGRATIONS = (
             UNIQUE(user_id,local_day)
         )''',
     )),
+    Migration(6, (
+        '''CREATE TABLE subtasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id),
+            title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),
+            done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1)),
+            deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1)),
+            revision INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        )''',
+        'CREATE INDEX subtasks_parent ON subtasks(task_id,deleted,id)',
+    )),
 )
 
 

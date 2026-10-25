@@ -585,3 +585,23 @@ async def test_calendar_forged_and_past_creation_rejected(ui):
     for callback in ('cal:new:2026-10-22','cal:month:bad','cal:day:2026-10-23:-1','cal:task:999:2026-10-23'):
         await ui.click(callback)
     assert await ui.state() is None
+
+
+async def test_subtasks_ui_add_mark_rename_confirm_delete(ui):
+    await ui.text('Через 2 часа экзамен')
+    await ui.click(ui.button('quick:'))
+    await ui.click(ui.button('sub:list:'))
+    await ui.click(ui.button('sub:add:'))
+    await ui.text('Повторить тему')
+    await ui.click(ui.button('sub:item:'))
+    await ui.click(ui.button('sub:done:'))
+    assert '1 из 1' in ui.session.latest.text
+    await ui.click(ui.button('sub:item:'))
+    await ui.click(ui.button('sub:rename:'))
+    await ui.text('Повторить вторую тему')
+    await ui.click(ui.button('sub:item:'))
+    await ui.click(ui.button('sub:delete:'))
+    assert 'Удалить подзадачу?' in ui.session.latest.text
+    await ui.click(ui.button('sub:confirm:'))
+    assert '0 из 0' in ui.session.latest.text
+    assert (await ui.service.list_tasks(HUMAN.id))[1] == 1

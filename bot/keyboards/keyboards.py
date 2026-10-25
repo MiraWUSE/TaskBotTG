@@ -97,6 +97,7 @@ def task_keyboard(task_id: int, repeat: str, today: bool, page: int, version: st
         [('🚦 Приоритет', f'task:priority:{suffix}')],
         [('🗂 Категория', f'task:category:{suffix}')],
         [('⏳ Напомнить заранее', f'task:advance:{suffix}')],
+        [('☑️ Подзадачи', f'sub:list:{task_id}:0')],
         [("✅ Выполнено", f"task:done:{suffix}")],
     ]
     if repeat == "none":

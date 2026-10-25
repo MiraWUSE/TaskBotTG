@@ -57,6 +57,7 @@ def _task(row: aiosqlite.Row) -> Task:
         priority=row['priority'],
         category=row['category'], category_label=row['category_label'],
         advance_offsets=tuple(sorted(int(x) for x in (row['advance_offsets'] or '').split(',') if x)),
+        subtask_total=row['subtask_total'], subtask_done=row['subtask_done'],
     )
 
 
@@ -75,7 +76,9 @@ def _delivery(row: aiosqlite.Row) -> Delivery:
 # актуальным и отображается в списке; будущий экземпляр серии хранится отдельно.
 TASK_VIEW = f"""
 WITH task_view AS (
-    SELECT t.*, (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets,
+    SELECT t.*, (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0) AS subtask_total,
+    (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0 AND s.done=1) AS subtask_done,
+    (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets,
     (SELECT name FROM categories c WHERE c.id=t.category) AS category_label,
     CASE WHEN t.repeat='none' THEN COALESCE((
         SELECT MIN(d.due_at) FROM deliveries d
@@ -90,7 +93,9 @@ WITH task_view AS (
 """
 TASK_TODAY_VIEW = f"""
 WITH task_candidates AS (
-    SELECT t.*, (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets,
+    SELECT t.*, (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0) AS subtask_total,
+    (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0 AND s.done=1) AS subtask_done,
+    (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets,
     (SELECT name FROM categories c WHERE c.id=t.category) AS category_label, (
         SELECT MIN(d.due_at) FROM deliveries d
         WHERE d.task_id=t.id AND d.generation=t.generation
@@ -207,7 +212,7 @@ class TaskService:
 
     @staticmethod
     async def _owned_task(connection, user_id: int, task_id: int):
-        row = await _one(connection, "SELECT t.*, (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets, (SELECT name FROM categories c WHERE c.id=t.category) AS category_label FROM tasks t WHERE id=? AND user_id=? AND status='active'",
+        row = await _one(connection, "SELECT t.*, (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0) AS subtask_total, (SELECT COUNT(*) FROM subtasks s WHERE s.task_id=t.id AND s.deleted=0 AND s.done=1) AS subtask_done, (SELECT group_concat(minutes) FROM task_advances a WHERE a.task_id=t.id) AS advance_offsets, (SELECT name FROM categories c WHERE c.id=t.category) AS category_label FROM tasks t WHERE id=? AND user_id=? AND status='active'",
                          (task_id, user_id))
         if row is None:
             raise TaskNotFound()

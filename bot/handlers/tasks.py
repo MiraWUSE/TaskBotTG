@@ -87,6 +87,8 @@ def _task_text(task, timezone: str, now: datetime) -> str:
     if task.repeat != "none":
         text += "\n\n«Выполнено» завершает только ближайшее напоминание."
     text += '\n⏳ Заранее: ' + (', '.join(ADVANCES[x].lower() for x in task.advance_offsets) or 'выключено')
+    if task.subtask_total:
+        text += f'\n☑️ {task.subtask_done} из {task.subtask_total} выполнено'
     return text
 
 

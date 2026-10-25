@@ -34,6 +34,17 @@ class Task:
     category: str = 'other'
     category_label: str = '📌 Другое'
     advance_offsets: tuple[int, ...] = ()
+    subtask_total: int = 0
+    subtask_done: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class Subtask:
+    id: int
+    task_id: int
+    title: str
+    done: bool
+    revision: int
 
 
 @dataclass(frozen=True, slots=True)
